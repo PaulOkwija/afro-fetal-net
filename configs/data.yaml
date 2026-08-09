@@ -2,39 +2,41 @@
 # and how its metadata columns map onto this project's standard manifest
 # columns (see src/fetal_ai/data/manifest.py).
 #
-# The column_mapping values below are placeholders for the FETAL_PLANES_DB
-# side. They must be confirmed against the real file once it is downloaded
-# in Phase 1, by opening FETAL_PLANES_DB_data.xlsx (or .csv) and checking
-# the actual column headers, then editing this file to match. Do not run
-# 02_build_manifest.py against a guessed mapping, manifest.py will raise
-# a clear error naming the actual columns it found if the mapping is wrong,
-# which is the intended way to catch this rather than silently proceeding.
-#
-# The African dataset's column_mapping below is already confirmed against
-# African_planes_database.csv from the previous version of this project.
+# Every value below was confirmed by actually opening the downloaded raw
+# files on Kaggle and inspecting them (columns, separators, a sample of
+# filenames on disk), not guessed. See the Kaggle setup notebook for the
+# inspection cell that produced this. If the data is ever re-downloaded
+# from a new Zenodo version and something here stops matching,
+# scripts/02_build_manifest.py will raise a clear error naming the
+# actual columns or files it found, that is the intended way to catch a
+# future mismatch, not a re-guess.
 
 datasets:
   fetal_planes_db:
     zenodo_record_id: "3904280"
     doi: "10.5281/zenodo.3904280"
     raw_dir: "data/raw/fetal_planes_db"
-    metadata_file: "FETAL_PLANES_DB_data.xlsx"   # confirm exact filename after download
-    image_dir: "data/raw/fetal_planes_db/Images"  # confirm exact folder name after download
-    filename_suffix: ".png"                       # confirm image file extension after download
+    metadata_file: "FETAL_PLANES_DB_data.csv"
+    csv_separator: ";"   # confirmed: this file is semicolon delimited, not comma
+    image_dir: "data/raw/fetal_planes_db/Images"
+    filename_suffix: ".png"   # confirmed: Image_name has no extension, files on disk do
+    group_subdir: false        # confirmed: Images/ is one flat folder, no subfolders
     source_dataset: "fetal_planes_db"
     group_value_or_column: "spain"   # single group, all rows treated as one center
     column_mapping:
-      patient_id: "Patient_num"      # PLACEHOLDER, confirm against real file
-      filename: "Image_name"          # PLACEHOLDER, confirm against real file
-      label: "Plane"                  # PLACEHOLDER, confirm against real file
-      original_split: "Train"         # PLACEHOLDER, confirm against real file
+      patient_id: "Patient_num"   # confirmed
+      filename: "Image_name"       # confirmed
+      label: "Plane"               # confirmed
+      original_split: "Train"      # confirmed, header has a trailing space, manifest.py strips it
     label_mapping:
       Fetal abdomen: abdomen
       Fetal brain: brain
       Fetal femur: femur
       # Thorax, maternal cervix, and "Other" are intentionally excluded here
       # because this project's task is the 3 class problem (brain, femur,
-      # abdomen), matching the African dataset's classes. If a future
+      # abdomen), matching the African dataset's classes. "Other" was
+      # confirmed present as a real raw label during inspection, and
+      # dropping it is a deliberate choice, not an omission. If a future
       # experiment needs the 4 or 6 class version, add a second entry in
       # this file rather than changing this one's meaning underneath
       # existing results.
@@ -43,23 +45,28 @@ datasets:
     zenodo_record_id: "7540448"
     doi: "10.5281/zenodo.7540448"
     raw_dir: "data/raw/african_multicentre"
-    metadata_file: "African_planes_database.csv"   # confirmed from prior version
-    image_dir: "data/raw/african_multicentre/Images"  # confirm exact folder name after download
-    filename_suffix: ".png"
+    metadata_file: "Zenodo_dataset/African_planes_database.csv"   # confirmed: nested one level under the extracted archive folder
+    csv_separator: ","
+    image_dir: "data/raw/african_multicentre/Zenodo_dataset"
+    filename_suffix: ".png"   # confirmed: Filename has no extension, files on disk do
+    group_subdir: true         # confirmed: images live under Zenodo_dataset/<Center>/<filename>.png, not one flat folder
     source_dataset: "african_multicentre"
-    group_value_or_column: "Center"   # gives country name per row
+    group_value_or_column: "Center"   # gives country name per row, and doubles as the subfolder name
     column_mapping:
       patient_id: "Patient_num"
       filename: "Filename"
       label: "Plane"
       original_split: "Train"
     label_mapping:
-      fetal abdomen: abdomen
-      fetal brain: brain
-      fetal femur: femur
-      # fetal thorax is intentionally excluded, same reasoning as above.
-      # Note the previous version's config default silently included a
-      # 4th "other" class here in some code paths. It is left out here on
-      # purpose, and that is now the only place this decision is made.
+      Fetal abdomen: abdomen   # note: capital F, confirmed exact casing from the real file
+      Fetal brain: brain
+      Fetal femur: femur
+      # Fetal thorax is intentionally excluded, same reasoning as above.
+      # The previous version of this config had these keys lowercase,
+      # which would have silently dropped every single African row,
+      # since manifest.py matches label_mapping keys exactly, case
+      # sensitive, on purpose. That was caught here by testing the
+      # mapping against real inspected data before running it for real,
+      # not by discovering an empty manifest later.
 
 combined_manifest_out: "data/manifest/manifest.csv"

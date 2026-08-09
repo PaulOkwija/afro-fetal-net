@@ -62,6 +62,8 @@ def main() -> None:
             group_value_or_column=entry["group_value_or_column"],
             source_dataset=entry["source_dataset"],
             filename_suffix=entry.get("filename_suffix", ""),
+            csv_separator=entry.get("csv_separator", ","),
+            group_subdir=entry.get("group_subdir", False),
         )
 
         print(f"\n{key}: {len(manifest)} rows, "
