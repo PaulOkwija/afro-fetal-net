@@ -61,6 +61,8 @@ def build_manifest(
     group_value_or_column: str,
     source_dataset: str,
     filename_suffix: str = "",
+    csv_separator: str = ",",
+    group_subdir: bool = False,
 ) -> pd.DataFrame:
     """
     Build one standardized manifest dataframe for a single raw dataset.
@@ -72,9 +74,14 @@ def build_manifest(
 
     label_mapping maps the raw label strings to this project's class
     names, for example {"Fetal brain": "brain", "Fetal thorax": "other"}.
+    Keys must match the raw file exactly, including case, this function
+    does not normalize case for you, since silently normalizing case is
+    how a labeling mismatch goes unnoticed instead of failing loudly.
     Any raw label not present in label_mapping is dropped, with a printed
-    warning, rather than silently kept or silently discarded without
-    anyone knowing.
+    count, rather than silently kept or silently discarded without
+    anyone knowing. If dropping labels leaves zero rows, that is treated
+    as an error, not a warning, see the check right before this function
+    returns.
 
     group_value_or_column is either a literal string (for a dataset that
     has only one group, like "spain" for FETAL_PLANES_DB) or the name of
@@ -84,6 +91,16 @@ def build_manifest(
     filename_suffix is appended to each filename before checking it
     against image_dir, for datasets where the metadata file omits the
     file extension.
+
+    csv_separator is passed straight to pandas, for metadata files that
+    are not comma separated. Confirm the real separator by opening the
+    file, do not guess, a wrong separator produces a single merged
+    column name rather than a clean error, which is easy to miss.
+
+    group_subdir, when True, means images are not all in one flat
+    image_dir, but organized in a per-group subfolder underneath it,
+    for example image_dir/Malawi/<filename>. When True, the row's group
+    value (from group_value_or_column) is used as that subfolder name.
     """
     raw_metadata_path = Path(raw_metadata_path)
     image_dir = Path(image_dir)
@@ -91,7 +108,9 @@ def build_manifest(
     if raw_metadata_path.suffix in (".xlsx", ".xls"):
         raw = pd.read_excel(raw_metadata_path)
     else:
-        raw = pd.read_csv(raw_metadata_path)
+        raw = pd.read_csv(raw_metadata_path, sep=csv_separator)
+
+    raw.columns = [c.strip() for c in raw.columns]
 
     for std_col, raw_col in column_mapping.items():
         if raw_col not in raw.columns:
@@ -113,18 +132,24 @@ def build_manifest(
             continue
 
         filename = str(r[column_mapping["filename"]]).strip() + filename_suffix
-        image_path = image_dir / filename
-        if not image_path.exists():
-            raise FileNotFoundError(
-                f"Manifest row references {image_path}, which does not "
-                f"exist. The image directory or filename_suffix is "
-                f"probably wrong for this dataset."
-            )
 
         if group_value_or_column in raw.columns:
             group = str(r[group_value_or_column]).strip()
         else:
             group = group_value_or_column
+
+        if group_subdir:
+            image_path = image_dir / group / filename
+        else:
+            image_path = image_dir / filename
+
+        if not image_path.exists():
+            raise FileNotFoundError(
+                f"Manifest row references {image_path}, which does not "
+                f"exist. The image directory, filename_suffix, or "
+                f"group_subdir setting is probably wrong for this "
+                f"dataset. Checked group_subdir={group_subdir}."
+            )
 
         rows.append({
             "patient_id": str(r[column_mapping["patient_id"]]).strip(),
@@ -145,6 +170,16 @@ def build_manifest(
             f"in label_mapping: {dropped_labels}. This is expected if "
             f"label_mapping intentionally excludes some classes, verify "
             f"that is the case before proceeding."
+        )
+
+    if len(rows) == 0:
+        raise ValueError(
+            f"Every row in {raw_metadata_path} was dropped, none of the "
+            f"raw labels matched label_mapping. Raw labels seen: "
+            f"{dropped_labels}. label_mapping keys must match the raw "
+            f"file exactly, including case. This is an error, not a "
+            f"warning, because a manifest with zero rows for an entire "
+            f"dataset must never pass silently through to training."
         )
 
     manifest = pd.DataFrame(rows, columns=STANDARD_COLUMNS)
