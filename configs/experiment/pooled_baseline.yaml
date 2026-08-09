@@ -1,0 +1,55 @@
+# This is the pooled fine tuning baseline: one model, fine tuned once on
+# all four non Malawi countries pooled together, no leave one country out
+# structure, no model soup. Both reviewers of the original submission
+# asked for this exact comparison, and it did not exist in the previous
+# version. Everything else about this config matches loco_africa.yaml so
+# that the comparison between the two is fair.
+
+experiment_name: "pooled_baseline_efficientnet_b0"
+
+classes:
+  - brain
+  - femur
+  - abdomen
+
+seed: 42
+
+data:
+  manifest_path: "data/manifest/manifest.csv"
+  split_name: "pooled_baseline_malawi"
+  splits_dir: "data/manifest/splits"
+  held_out_group: "Malawi"
+  val_fraction: 0.2
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+
+preprocessing:
+  use_clahe: true
+  clahe_clip_limit: 2.0
+  clahe_tile_size: [8, 8]
+  contrast_threshold: 35
+
+augmentation:
+  random_horizontal_flip_p: 0.5
+  random_rotation_degrees: 15
+  brightness_contrast_p: 0.6
+  gaussian_noise_p: 0.3
+
+model:
+  architecture: "efficientnet_b0"
+  pretrained_checkpoint: "results/baseline_spain_efficientnet_b0/checkpoint.pt"
+  fine_tune_layers: 4
+
+training:
+  epochs: 20
+  learning_rate: 0.00005
+  weight_decay: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 5
+
+evaluation:
+  metrics: ["f1_macro", "accuracy", "pr_auc_macro"]
+  bootstrap_n: 2000
+  bootstrap_confidence: 0.95

@@ -1,0 +1,57 @@
+# Every field in this file is required by src/fetal_ai/utils/config.py.
+# This file is deliberately self contained rather than including a shared
+# base config, so that anyone reading results/RESULTS_LEDGER.md can open
+# exactly this one file and see everything that produced a given result,
+# without needing to trace through a chain of included configs.
+
+experiment_name: "loco_africa_efficientnet_b0"
+
+# The 3 class task used throughout this project. If this list is ever
+# different from what a checkpoint was trained with, the checkpoint
+# loader in src/fetal_ai/models raises an error rather than guessing,
+# see the class_names field that gets embedded in every saved checkpoint.
+classes:
+  - brain
+  - femur
+  - abdomen
+
+seed: 42
+
+data:
+  manifest_path: "data/manifest/manifest.csv"
+  split_name: "loco_malawi"
+  splits_dir: "data/manifest/splits"
+  held_out_group: "Malawi"
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+
+preprocessing:
+  use_clahe: true
+  clahe_clip_limit: 2.0
+  clahe_tile_size: [8, 8]
+  contrast_threshold: 35
+
+augmentation:
+  random_horizontal_flip_p: 0.5
+  random_rotation_degrees: 15
+  brightness_contrast_p: 0.6
+  gaussian_noise_p: 0.3
+
+model:
+  architecture: "efficientnet_b0"
+  pretrained_checkpoint: "results/baseline_spain_efficientnet_b0/checkpoint.pt"
+  fine_tune_layers: 4
+
+training:
+  epochs: 20
+  learning_rate: 0.00005
+  weight_decay: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 5
+
+evaluation:
+  metrics: ["f1_macro", "accuracy", "pr_auc_macro"]
+  bootstrap_n: 2000
+  bootstrap_confidence: 0.95

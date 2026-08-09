@@ -1,0 +1,65 @@
+# This file is the single source of truth for where raw data comes from
+# and how its metadata columns map onto this project's standard manifest
+# columns (see src/fetal_ai/data/manifest.py).
+#
+# The column_mapping values below are placeholders for the FETAL_PLANES_DB
+# side. They must be confirmed against the real file once it is downloaded
+# in Phase 1, by opening FETAL_PLANES_DB_data.xlsx (or .csv) and checking
+# the actual column headers, then editing this file to match. Do not run
+# 02_build_manifest.py against a guessed mapping, manifest.py will raise
+# a clear error naming the actual columns it found if the mapping is wrong,
+# which is the intended way to catch this rather than silently proceeding.
+#
+# The African dataset's column_mapping below is already confirmed against
+# African_planes_database.csv from the previous version of this project.
+
+datasets:
+  fetal_planes_db:
+    zenodo_record_id: "3904280"
+    doi: "10.5281/zenodo.3904280"
+    raw_dir: "data/raw/fetal_planes_db"
+    metadata_file: "FETAL_PLANES_DB_data.xlsx"   # confirm exact filename after download
+    image_dir: "data/raw/fetal_planes_db/Images"  # confirm exact folder name after download
+    filename_suffix: ".png"                       # confirm image file extension after download
+    source_dataset: "fetal_planes_db"
+    group_value_or_column: "spain"   # single group, all rows treated as one center
+    column_mapping:
+      patient_id: "Patient_num"      # PLACEHOLDER, confirm against real file
+      filename: "Image_name"          # PLACEHOLDER, confirm against real file
+      label: "Plane"                  # PLACEHOLDER, confirm against real file
+      original_split: "Train"         # PLACEHOLDER, confirm against real file
+    label_mapping:
+      Fetal abdomen: abdomen
+      Fetal brain: brain
+      Fetal femur: femur
+      # Thorax, maternal cervix, and "Other" are intentionally excluded here
+      # because this project's task is the 3 class problem (brain, femur,
+      # abdomen), matching the African dataset's classes. If a future
+      # experiment needs the 4 or 6 class version, add a second entry in
+      # this file rather than changing this one's meaning underneath
+      # existing results.
+
+  african_multicentre:
+    zenodo_record_id: "7540448"
+    doi: "10.5281/zenodo.7540448"
+    raw_dir: "data/raw/african_multicentre"
+    metadata_file: "African_planes_database.csv"   # confirmed from prior version
+    image_dir: "data/raw/african_multicentre/Images"  # confirm exact folder name after download
+    filename_suffix: ".png"
+    source_dataset: "african_multicentre"
+    group_value_or_column: "Center"   # gives country name per row
+    column_mapping:
+      patient_id: "Patient_num"
+      filename: "Filename"
+      label: "Plane"
+      original_split: "Train"
+    label_mapping:
+      fetal abdomen: abdomen
+      fetal brain: brain
+      fetal femur: femur
+      # fetal thorax is intentionally excluded, same reasoning as above.
+      # Note the previous version's config default silently included a
+      # 4th "other" class here in some code paths. It is left out here on
+      # purpose, and that is now the only place this decision is made.
+
+combined_manifest_out: "data/manifest/manifest.csv"

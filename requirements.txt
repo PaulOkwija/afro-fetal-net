@@ -1,0 +1,20 @@
+# Pin exact versions. When you upgrade one on purpose, upgrade it here and note why
+# in the commit message. Do not let Kaggle's preinstalled versions silently differ
+# from what is written here, scripts/00_check_environment.py checks this at runtime.
+
+torch==2.4.1
+torchvision==0.19.1
+timm==1.0.9
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.5.1
+opencv-python-headless==4.10.0.84
+Pillow==10.4.0
+matplotlib==3.9.1
+seaborn==0.13.2
+pyyaml==6.0.2
+tqdm==4.66.4
+requests==2.32.3
+wandb==0.17.7
+pytest==8.3.2
+grad-cam==1.5.4

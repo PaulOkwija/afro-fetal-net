@@ -1,0 +1,54 @@
+# The source domain model, trained on FETAL_PLANES_DB only. Its checkpoint
+# is what every African fine tuning experiment starts from. Note this
+# config uses the project's 3 class task (brain, femur, abdomen) so this
+# checkpoint is directly compatible with the African experiments, rather
+# than training a 6 class or 4 class Spain model and hoping the head
+# still lines up later, which was a source of confusion in the previous
+# version's checkpoint loading code.
+
+experiment_name: "baseline_spain_efficientnet_b0"
+
+classes:
+  - brain
+  - femur
+  - abdomen
+
+seed: 42
+
+data:
+  manifest_path: "data/manifest/manifest.csv"
+  split_name: "spain_patient_level"
+  splits_dir: "data/manifest/splits"
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+
+preprocessing:
+  use_clahe: false
+  clahe_clip_limit: 2.0
+  clahe_tile_size: [8, 8]
+  contrast_threshold: 35
+
+augmentation:
+  random_horizontal_flip_p: 0.5
+  random_rotation_degrees: 15
+  brightness_contrast_p: 0.6
+  gaussian_noise_p: 0.3
+
+model:
+  architecture: "efficientnet_b0"
+  pretrained_checkpoint: null   # ImageNet weights, via timm, pretrained=true
+  fine_tune_layers: -1          # all layers trainable
+
+training:
+  epochs: 50
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 10
+
+evaluation:
+  metrics: ["f1_macro", "accuracy", "pr_auc_macro"]
+  bootstrap_n: 2000
+  bootstrap_confidence: 0.95

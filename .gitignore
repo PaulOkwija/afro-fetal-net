@@ -1,0 +1,23 @@
+# Raw data is never committed. Only the manifest (checksums, patient IDs, splits) is.
+data/raw/
+data/interim/
+
+# Model weights and large result artifacts are not committed to git.
+# They are logged to Weights and Biases instead, and referenced by run_id.
+checkpoints/
+results/*/
+!results/RESULTS_LEDGER.md
+!results/README.md
+
+# Standard python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Environment and secrets
+.env
+wandb/

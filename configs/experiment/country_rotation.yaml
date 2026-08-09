@@ -1,0 +1,56 @@
+# Rotates which country is treated as the fully unseen test set, one at a
+# time, across all five countries. This exists to answer a direct
+# question from the AFRICAI decision letter: does the unseen country
+# beating every validation fold happen only for Malawi (which would point
+# at a leak) or is it a pattern that holds across all five countries
+# (which would be a genuine, reportable finding). held_out_group is set
+# per run by scripts/05_train.py when it loops over this config's
+# data.split_name, which points at the full rotation split file rather
+# than one single held out group.
+
+experiment_name: "country_rotation_efficientnet_b0"
+
+classes:
+  - brain
+  - femur
+  - abdomen
+
+seed: 42
+
+data:
+  manifest_path: "data/manifest/manifest.csv"
+  split_name: "country_rotation"
+  splits_dir: "data/manifest/splits"
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+
+preprocessing:
+  use_clahe: true
+  clahe_clip_limit: 2.0
+  clahe_tile_size: [8, 8]
+  contrast_threshold: 35
+
+augmentation:
+  random_horizontal_flip_p: 0.5
+  random_rotation_degrees: 15
+  brightness_contrast_p: 0.6
+  gaussian_noise_p: 0.3
+
+model:
+  architecture: "efficientnet_b0"
+  pretrained_checkpoint: "results/baseline_spain_efficientnet_b0/checkpoint.pt"
+  fine_tune_layers: 4
+
+training:
+  epochs: 20
+  learning_rate: 0.00005
+  weight_decay: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 5
+
+evaluation:
+  metrics: ["f1_macro", "accuracy", "pr_auc_macro"]
+  bootstrap_n: 2000
+  bootstrap_confidence: 0.95

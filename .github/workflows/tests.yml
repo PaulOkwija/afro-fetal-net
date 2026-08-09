@@ -1,0 +1,29 @@
+name: tests
+
+# These tests run on every push and every pull request, on a free GitHub hosted
+# runner, before any GPU time is ever spent on Kaggle. They check the two classes
+# of bug that caused real problems before: patient level data leakage, and silent
+# config misconfiguration. Neither of those needs a GPU or the actual image files
+# to catch, they only need the manifest and the config schema.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest pyyaml pandas numpy scikit-learn
+
+      - name: Run tests
+        run: pytest tests/ -v
