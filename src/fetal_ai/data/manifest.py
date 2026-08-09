@@ -63,6 +63,7 @@ def build_manifest(
     filename_suffix: str = "",
     csv_separator: str = ",",
     group_subdir: bool = False,
+    duplicate_report_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """
     Build one standardized manifest dataframe for a single raw dataset.
@@ -101,6 +102,17 @@ def build_manifest(
     image_dir, but organized in a per-group subfolder underneath it,
     for example image_dir/Malawi/<filename>. When True, the row's group
     value (from group_value_or_column) is used as that subfolder name.
+
+    duplicate_report_path, if given, writes a CSV listing every row
+    dropped as a byte-identical duplicate of another row, alongside
+    which row it duplicated. Investigation into this project's actual
+    source data found real duplicate patient entries in the African
+    dataset (the same patient's full image set appears under two
+    different Patient_num values) and duplicate video frames within
+    single patients in FETAL_PLANES_DB. Both are dropped by the
+    checksum based dedup below, this report exists so which specific
+    rows were affected is auditable and citable in the paper, rather
+    than a print statement that scrolls out of the log.
     """
     raw_metadata_path = Path(raw_metadata_path)
     image_dir = Path(image_dir)
@@ -131,12 +143,21 @@ def build_manifest(
             dropped_labels[raw_label] = dropped_labels.get(raw_label, 0) + 1
             continue
 
-        filename = str(r[column_mapping["filename"]]).strip() + filename_suffix
-
         if group_value_or_column in raw.columns:
             group = str(r[group_value_or_column]).strip()
         else:
             group = group_value_or_column
+
+        # patient_id is prefixed with group (country, or "spain") because
+        # Patient_num is not guaranteed unique across countries, the
+        # African dataset's raw numbering overlaps between countries.
+        # Confirmed by direct inspection: without this prefix, 450 raw
+        # rows collapsed to 64 unique patient identities instead of the
+        # real 127. This prefix is the only thing that makes patient_id
+        # safe to use as a grouping key anywhere in this project.
+        patient_id = f"{group}_{str(r[column_mapping['patient_id']]).strip()}"
+
+        filename = str(r[column_mapping["filename"]]).strip() + filename_suffix
 
         if group_subdir:
             image_path = image_dir / group / filename
@@ -152,7 +173,7 @@ def build_manifest(
             )
 
         rows.append({
-            "patient_id": str(r[column_mapping["patient_id"]]).strip(),
+            "patient_id": patient_id,
             "filename": filename,
             "file_sha256": _sha256_of_file(image_path),
             "label": label_mapping[raw_label],
@@ -184,13 +205,44 @@ def build_manifest(
 
     manifest = pd.DataFrame(rows, columns=STANDARD_COLUMNS)
 
-    n_before = len(manifest)
-    manifest = manifest.drop_duplicates(subset=["file_sha256"])
-    if len(manifest) != n_before:
-        print(
-            f"Dropped {n_before - len(manifest)} exact duplicate images "
-            f"(same file content, detected by checksum)."
+    dupe_mask = manifest.duplicated(subset=["file_sha256"], keep="first")
+    n_dropped = int(dupe_mask.sum())
+
+    if n_dropped > 0:
+        # Build the audit report before dropping anything, pairing each
+        # dropped row with the row that was kept in its place (same
+        # sha256, first occurrence in the file).
+        kept_by_sha = (
+            manifest[~dupe_mask]
+            .drop_duplicates(subset=["file_sha256"])
+            .set_index("file_sha256")
         )
+        dropped_rows = manifest[dupe_mask].copy()
+        dropped_rows["kept_patient_id"] = dropped_rows["file_sha256"].map(
+            kept_by_sha["patient_id"]
+        )
+        dropped_rows["kept_filename"] = dropped_rows["file_sha256"].map(
+            kept_by_sha["filename"]
+        )
+
+        print(
+            f"Dropped {n_dropped} exact duplicate images (same file "
+            f"content, detected by checksum). This can mean a real "
+            f"duplicate patient entry in the source metadata, or "
+            f"repeated video frames within one patient's own scan, see "
+            f"the duplicate report for exactly which rows and why."
+        )
+
+        if duplicate_report_path is not None:
+            out_path = Path(duplicate_report_path)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            dropped_rows[[
+                "patient_id", "filename", "label", "group",
+                "kept_patient_id", "kept_filename", "file_sha256",
+            ]].to_csv(out_path, index=False)
+            print(f"Duplicate report written to {out_path}")
+
+    manifest = manifest[~dupe_mask]
 
     return manifest
 

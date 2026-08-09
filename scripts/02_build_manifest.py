@@ -64,6 +64,7 @@ def main() -> None:
             filename_suffix=entry.get("filename_suffix", ""),
             csv_separator=entry.get("csv_separator", ","),
             group_subdir=entry.get("group_subdir", False),
+            duplicate_report_path=f"data/manifest/duplicates_{key}.csv",
         )
 
         print(f"\n{key}: {len(manifest)} rows, "
