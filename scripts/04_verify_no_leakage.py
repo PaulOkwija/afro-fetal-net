@@ -40,7 +40,11 @@ def _sha256_of_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def verify_checksums(manifest: pd.DataFrame, image_dir_by_source: dict[str, str]) -> list[str]:
+def verify_checksums(
+    manifest: pd.DataFrame,
+    image_dir_by_source: dict[str, str],
+    group_subdir_by_source: dict[str, bool],
+) -> list[str]:
     problems = []
     for _, row in manifest.iterrows():
         image_dir = image_dir_by_source.get(row["source_dataset"])
@@ -50,7 +54,14 @@ def verify_checksums(manifest: pd.DataFrame, image_dir_by_source: dict[str, str]
                 f"'{row['source_dataset']}'"
             )
             continue
-        image_path = Path(image_dir) / row["filename"]
+
+        # African images live under a per-country subfolder, confirmed
+        # by direct inspection, see DECISIONS_LOG.md. Everything else
+        # (FETAL_PLANES_DB) is one flat folder.
+        if group_subdir_by_source.get(row["source_dataset"], False):
+            image_path = Path(image_dir) / row["group"] / row["filename"]
+        else:
+            image_path = Path(image_dir) / row["filename"]
         if not image_path.exists():
             problems.append(f"Missing file on disk: {image_path}")
             continue
@@ -97,7 +108,11 @@ def main() -> None:
         "--fetal_image_dir", default="data/raw/fetal_planes_db/Images",
     )
     parser.add_argument(
-        "--african_image_dir", default="data/raw/african_multicentre/Images",
+        "--african_image_dir", default="data/raw/african_multicentre/Zenodo_dataset",
+    )
+    parser.add_argument(
+        "--african_group_subdir", action="store_true", default=True,
+        help="African images live in per-country subfolders under african_image_dir",
     )
     args = parser.parse_args()
 
@@ -112,7 +127,11 @@ def main() -> None:
             "fetal_planes_db": args.fetal_image_dir,
             "african_multicentre": args.african_image_dir,
         }
-        checksum_problems = verify_checksums(manifest, image_dir_by_source)
+        group_subdir_by_source = {
+            "fetal_planes_db": False,
+            "african_multicentre": args.african_group_subdir,
+        }
+        checksum_problems = verify_checksums(manifest, image_dir_by_source, group_subdir_by_source)
         all_problems.extend(checksum_problems)
         print(f"  {len(checksum_problems)} checksum problem(s) found")
     else:

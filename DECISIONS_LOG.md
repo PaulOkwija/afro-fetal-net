@@ -125,6 +125,23 @@ scripts/02_build_manifest.py
 **Open question:** none, confirmed working against synthetic data
 mirroring the real structure before handing back.
 
+**Follow-up 2026-08-09:** scripts/04_verify_no_leakage.py was written
+before this fix and never updated, its checksum re-verification still
+defaulted to the old flat `data/raw/african_multicentre/Images` path.
+Running it after the manifest and split fixes reported 340 "missing
+file" problems, every single one under that stale path. The LOCO,
+pooled baseline, and country rotation checks in the same run all
+reported 0 problems, which was the tell that this was a leftover
+assumption in one script, not a real data or split issue, since those
+checks work entirely from the manifest and never touch the filesystem
+directly. Fixed the default path and added a group_subdir parameter to
+verify_checksums, mirroring the same fix already made in manifest.py.
+Confirmed against synthetic data both that the fix resolves it and that
+the unfixed version genuinely reproduces the original failure, so the
+test isn't just passing by coincidence.
+
+**Files touched:** scripts/04_verify_no_leakage.py
+
 ---
 
 ## 2026-08-09 Patient_num collides across African countries, and real duplicate images exist in both source datasets
@@ -187,3 +204,50 @@ duplicate concentration (Malawi and Algeria lost the most images to
 deduplication) still look the way they did in the investigation, and
 decide whether that concentration is worth a specific sentence in the
 paper beyond the general note about duplicate entries.
+
+**Resolved 2026-08-09:** reran scripts/02_build_manifest.py against the
+fixed manifest.py. African unique patients went from 61 to 116, close
+to the 127 predicted in Investigation 1, the remaining gap is patients
+whose entire image set was a full duplicate of another patient and
+correctly collapsed to one surviving identity. Combined total across
+both datasets is 1243 unique patients, and 1127 (fetal_planes_db) + 116
+(african_multicentre) = 1243 exactly, a clean check that there is no
+further collision between the two datasets. Image counts per country
+are unchanged from before the fix (Algeria 57, Egypt 73, Ghana 75,
+Malawi 60, Uganda 75), which is expected, deduplication runs on
+file_sha256 and was never affected by the patient_id fix, only the
+patient identity each surviving image maps to changed.
+
+The concentration question is answered: Malawi and Algeria are still
+the two countries that lost the most images to deduplication (Malawi
+75 to 60, a 20 percent reduction; Algeria 75 to 57, a 24 percent
+reduction), same as in the original investigation. This is worth a
+specific, plainly stated sentence in the paper's dataset section, not
+folded into a generic deduplication note: the corrected, deduplicated
+Malawi held-out test set is n=60 (20 abdomen, 21 brain, 19 femur), not
+the n=75 reported in the original submission. This makes the already
+small held-out set smaller, which strengthens rather than weakens the
+case for bootstrap confidence intervals on every number computed from
+it, and it should be stated as a correction, not buried.
+
+**Independently verified 2026-08-09:** before reporting the 60 figure
+anywhere, re-checked the claim using a tool with no relationship to our
+own pipeline, in case the sha256 computation in manifest.py had a bug.
+Ran `md5sum` (standard Unix tool, different hash algorithm entirely)
+directly against the actual downloaded files for the Malawi patient
+017 vs 026 pair:
+```
+27ae27cab0fff14a80b38927533f80f3  Malawi/patient017_MWI_plane0.png
+27ae27cab0fff14a80b38927533f80f3  Malawi/patient026_MWI_plane0.png
+```
+Identical. Two independent hash algorithms (our SHA256, this MD5)
+agreeing that two files are byte-identical is conclusive, not
+coincidental. Also directly reconfirmed the raw CSV itself: Malawi has
+100 rows total, 75 once filtered to the 3-class task, matching the
+paper's original number exactly, so the 75 to 60 reduction is entirely
+attributable to the deduplication step, not a metadata reading error
+anywhere upstream. Decision stands: report both numbers in the paper,
+75 as the source metadata's nominal count, 60 as the verified count of
+distinct images, with the duplicate finding stated as a real
+characteristic of the public dataset, not a discrepancy to reconcile
+away.
