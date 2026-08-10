@@ -14,6 +14,7 @@ from __future__ import annotations
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     classification_report,
     confusion_matrix,
     f1_score,
@@ -21,6 +22,7 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
+from sklearn.preprocessing import label_binarize
 
 
 def compute_classification_metrics(
@@ -56,16 +58,40 @@ def compute_classification_metrics(
     }
 
     if y_probs is not None:
+        # average_precision_score, unlike roc_auc_score, has no labels
+        # parameter to fix the set of possible classes. Without
+        # explicitly binarizing y_true against the full class list, a
+        # batch missing one class (a real possibility on small bootstrap
+        # resamples, see evaluation/bootstrap.py) silently produces
+        # wrong-shaped input rather than a graceful, comparable failure.
+        # label_binarize fixes that by always producing one column per
+        # class in labels, present or not.
+        y_true_binarized = label_binarize(y_true, classes=labels)
+
+        # pr_auc_macro (average precision) is the primary ranking metric
+        # this project reports, chosen over ROC AUC because it is more
+        # sensitive to minority class performance, which matters more
+        # than false positive rate in a clinical screening setting with
+        # a small, imbalanced held out set like Malawi's 60 patients.
+        # See DECISIONS_LOG.md for why this was previously computed with
+        # roc_auc_score under this same key, a naming bug, not a choice.
         try:
             metrics["pr_auc_macro"] = float(
+                average_precision_score(y_true_binarized, y_probs, average="macro")
+            )
+        except ValueError as e:
+            metrics["pr_auc_macro"] = None
+            metrics["pr_auc_error"] = str(e)
+
+        # roc_auc_macro kept alongside as a separate, correctly named
+        # metric, some reviewers expect to see it, and it costs nothing
+        # extra to compute. Never used as a stand in for pr_auc_macro.
+        try:
+            metrics["roc_auc_macro"] = float(
                 roc_auc_score(y_true, y_probs, labels=labels, multi_class="ovr", average="macro")
             )
         except ValueError as e:
-            # Happens if a class is entirely absent from y_true in this
-            # particular evaluation set, which can occur on a small
-            # bootstrap resample. Report it explicitly instead of
-            # crashing the whole evaluation.
-            metrics["pr_auc_macro"] = None
-            metrics["pr_auc_error"] = str(e)
+            metrics["roc_auc_macro"] = None
+            metrics["roc_auc_error"] = str(e)
 
     return metrics
