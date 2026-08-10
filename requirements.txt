@@ -1,12 +1,21 @@
 # Pin exact versions. When you upgrade one on purpose, upgrade it here and note why
 # in the commit message. Do not let Kaggle's preinstalled versions silently differ
 # from what is written here, scripts/00_check_environment.py checks this at runtime.
+#
+# numpy and pandas are pinned to numpy 2.x releases on purpose, not left unpinned.
+# Kaggle's base image ships numpy 2.x, and the original ABI crash (see
+# DECISIONS_LOG.md, "Kaggle kernel numpy/pandas ABI mismatch") came from forcing a
+# downgrade to numpy 1.26.4 against packages already compiled for 2.x. Leaving
+# numpy and pandas fully unpinned avoids that specific conflict but reopens the
+# door to silent version drift across Kaggle sessions over time, which is exactly
+# what this file exists to prevent. Pinning within the 2.x line keeps both: no
+# downgrade fight with Kaggle's base image, and an explicit, reproducible version.
 
 torch==2.4.1
 torchvision==0.19.1
 timm==1.0.9
-numpy
-pandas
+numpy==2.0.2
+pandas==2.2.3
 scikit-learn==1.5.1
 opencv-python-headless==4.10.0.84
 Pillow==10.4.0

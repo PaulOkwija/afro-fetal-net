@@ -284,3 +284,133 @@ anywhere upstream. Decision stands: report both numbers in the paper,
 distinct images, with the duplicate finding stated as a real
 characteristic of the public dataset, not a discrepancy to reconcile
 away.
+
+---
+
+## 2026-08-10 pr_auc_macro was computed with roc_auc_score, a naming bug
+
+**Trigger:** a review pass flagged that src/fetal_ai/evaluation/metrics.py
+stored a roc_auc_score result under the key pr_auc_macro, and asked
+whether that was intentional before touching anything.
+
+**Evidence:** every configs/experiment/*.yaml already listed
+"pr_auc_macro" in evaluation.metrics, and neither the original paper
+nor the AFRICAI review mentions ROC AUC or PR AUC by name anywhere.
+
+**Finding:** genuine naming bug from when metrics.py was first
+scaffolded, not an intentional metric choice. Given the small,
+imbalanced held out sets this project works with (Malawi's 60 patients),
+PR AUC (average precision) is the more informative metric anyway, it is
+more sensitive to minority class precision than ROC AUC, which treats
+false positives and false negatives symmetrically.
+
+**Decision:** compute pr_auc_macro correctly with
+average_precision_score, and keep roc_auc_macro alongside as a
+separate, correctly named metric. First attempt at the fix assumed
+average_precision_score accepts multiclass integer y_true directly the
+same way roc_auc_score's multi_class="ovr" does, that assumption was
+wrong. average_precision_score has no labels parameter, so a batch
+missing one class (a real case on small bootstrap resamples) produced a
+shape error rather than a graceful result. Caught this by testing the
+missing class case specifically, not just the case where everything
+works. Fixed by explicitly binarizing y_true with label_binarize
+against the fixed class list before calling average_precision_score,
+which also turned out to make the missing class case handled better
+than roc_auc_score's own behavior (a real number, 0.36, instead of
+roc_auc_score's nan). Confirmed against 20 simulated bootstrap style
+resamples, matching how evaluation/bootstrap.py actually calls this
+function repeatedly.
+
+**Files touched:** src/fetal_ai/evaluation/metrics.py
+
+**Open question:** none, both metrics confirmed correct and
+distinguishable from each other, and the missing class edge case
+confirmed handled for both before calling this done.
+
+**Note on this entry itself:** the commit that shipped this fix
+(4f1b8d5, "Made some adjustments to the metrics") only touched
+metrics.py, this log entry was written separately afterward once a
+review pass noticed the log and the code had drifted apart. Worth
+remembering going forward: commit the log entry in the same commit as
+the fix it describes, not as an afterthought, otherwise this file stops
+doing the one thing it exists for.
+
+---
+
+## 2026-08-10 requirements.txt numpy/pandas left fully unpinned
+
+**Trigger:** review pass on the same commit, checking whether the
+Kaggle numpy ABI fix from an earlier entry had actually been resolved
+correctly in requirements.txt.
+
+**Evidence:** requirements.txt had `numpy` and `pandas` with no version
+constraint at all, versus every other dependency in the file being
+pinned to an exact version, and the file's own header comment saying
+"Pin exact versions... do not let Kaggle's preinstalled versions
+silently differ from what is written here."
+
+**Finding:** this does resolve the original ABI conflict (nothing forces
+a downgrade against Kaggle's numpy 2.x base image anymore), but it
+contradicts the file's stated purpose. Fully unpinned means a Kaggle
+session run months from now could silently resolve a different numpy
+than whatever this project was actually tested against, which is
+exactly the kind of drift this file exists to prevent.
+
+**Decision:** pinned numpy to 2.0.2 and pandas to 2.2.3, both numpy 2.x
+releases, compatible with Kaggle's base image without forcing a
+downgrade, and confirmed compatible with the other pinned versions
+(scikit-learn 1.5.1, torch 2.4.1) by actually installing this exact
+combination and rerunning the full test suite and the metrics.py fix's
+own sanity check against it, not just asserting compatibility.
+
+**Files touched:** requirements.txt
+
+**Open question:** if a future Kaggle base image ships a numpy version
+outside the 2.x line, this pin will need revisiting, the same way the
+original 1.26.4 pin did. Worth checking scripts/00_check_environment.py's
+output the first time this project runs on any new Kaggle image
+generation, rather than assuming this pin stays valid indefinitely.
+
+---
+
+## 2026-08-10 scripts/06_train.py, and an honest gap in what could be tested locally
+
+**Trigger:** writing the script that wires config, manifest, split,
+dataset, model, trainer, and provenance together into one runnable
+command, the last piece of Phase 4.
+
+**Finding:** different experiment configs point at different split
+types (patient_level_train_val_test, pooled_baseline, loco,
+country_rotation), and a split type determines how many training runs
+one config actually produces, one for the first two, one per fold for
+LOCO, one per held out country for the rotation. The script dispatches
+on split_type rather than having separate scripts per experiment kind,
+keeping the single training function (train_model) as the only place
+the actual training loop exists, matching the whole point of this
+rebuild.
+
+**Testing gap, stated plainly rather than glossed over:** ran a full
+integration test end to end, real config, real manifest, real
+synthetic images, real dataset and dataloader construction, real
+training loop, real checkpoint, real provenance stamp. It passed. But
+that test used pretrained=False, because this development sandbox has
+no network access to huggingface.co, where timm downloads ImageNet
+weights from, and the Spain baseline config uses pretrained=True. The
+traceback from the one attempt made with pretrained=True showed the
+code correctly attempting the real download and failing only on the
+network call itself, not on anything in this project's code, but that
+is not the same as having confirmed the download and weight loading
+actually completes. That first real run on Kaggle, which has internet
+access, is the actual confirmation this still needs.
+
+**Decision:** ship the script as tested, with this gap named explicitly
+rather than claimed as fully verified. The first real training run
+against Kaggle should be watched for successful ImageNet weight
+loading specifically, not just assumed to work because everything else
+did.
+
+**Files touched:** scripts/06_train.py
+
+**Open question:** confirm on the first real Kaggle run that
+pretrained=True actually downloads and loads ImageNet weights
+correctly, then this entry can be marked resolved.
