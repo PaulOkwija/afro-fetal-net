@@ -144,6 +144,39 @@ test isn't just passing by coincidence.
 
 ---
 
+## 2026-08-09 CLAHE contrast score definition is not specified in the original paper
+
+**Trigger:** writing src/fetal_ai/data/dataset.py, needed a concrete
+formula for the paper's "global contrast score" used to decide which
+images get selective CLAHE applied.
+
+**Evidence:** the paper states CLAHE is applied "selectively to images
+with a global contrast score below 35 (the lower quartile of the
+African dataset)" but never defines the formula for that score.
+
+**Finding:** no way to confirm the original authors' exact definition
+without their source code, which isn't available. This is a genuine
+gap, not something to quietly paper over with an assumption presented
+as fact.
+
+**Decision:** defined contrast score as RMS contrast, the standard
+deviation of grayscale pixel intensity, a standard and common
+definition, and said so explicitly in the module docstring rather than
+implying it matches the original implementation. Confirmed the function
+actually distinguishes a synthetic low contrast image from a high
+contrast one, and that the resulting selective CLAHE only modifies the
+image below threshold, before relying on it for anything.
+
+**Files touched:** src/fetal_ai/data/dataset.py
+
+**Open question:** worth a specific sentence in the camera-ready
+methods section stating this is our operational definition, since the
+original paper's phrasing was ambiguous and a reviewer could reasonably
+ask. If the original authors' code or a clearer definition ever
+surfaces, this is the one function that needs to change.
+
+---
+
 ## 2026-08-09 Patient_num collides across African countries, and real duplicate images exist in both source datasets
 
 **Trigger:** `02_build_manifest.py` reported only 61 unique patients for

@@ -277,3 +277,24 @@ def manifest_rows_for_patients(
     """Return manifest rows for a given list of patient IDs, used by the
     dataset classes to turn a split's patient list back into image rows."""
     return manifest[manifest["patient_id"].isin(patient_ids)].copy()
+
+
+def resolve_image_path(
+    row: pd.Series,
+    image_dir_by_source: dict[str, str],
+    group_subdir_by_source: dict[str, bool],
+) -> Path:
+    """
+    Build the on-disk path for one manifest row's image.
+
+    This is the one place that knows African images live under a
+    per-country subfolder and FETAL_PLANES_DB images sit in one flat
+    folder, see DECISIONS_LOG.md. build_manifest, scripts/04_verify_no_leakage.py,
+    and src/fetal_ai/data/dataset.py all call this function rather than
+    each reimplementing the same branch, closing the gap that let
+    verify_no_leakage.py drift out of sync with this logic once already.
+    """
+    image_dir = image_dir_by_source[row["source_dataset"]]
+    if group_subdir_by_source.get(row["source_dataset"], False):
+        return Path(image_dir) / row["group"] / row["filename"]
+    return Path(image_dir) / row["filename"]
