@@ -414,3 +414,94 @@ did.
 **Open question:** confirm on the first real Kaggle run that
 pretrained=True actually downloads and loads ImageNet weights
 correctly, then this entry can be marked resolved.
+
+**Resolved 2026-08-10:** first real Kaggle run against
+baseline_spain.yaml confirmed it. Output showed
+`model.safetensors: 100%|...| 21.4M/21.4M`, the ImageNet weight
+download and load completed successfully. The run itself then stopped
+at the provenance check instead (data/manifest/ was uncommitted, a
+separate, correct refusal, see the next entry), but that happened after
+the model was already built and downloaded, so this specific gap is
+closed. pretrained=True works as expected on Kaggle.
+
+---
+
+## 2026-08-10 First real Kaggle training attempt correctly refused on uncommitted data/manifest
+
+**Trigger:** first real run of scripts/06_train.py against
+baseline_spain.yaml on Kaggle, after the ImageNet weights loaded and
+the train/val datasets built (3061 train images from 732 patients, 726
+val images from 169 patients, both matching exactly what
+scripts/03_build_splits.py reported earlier), the run stopped with
+RuntimeError from get_git_commit: "Working tree has uncommitted
+changes... data/manifest/".
+
+**Finding:** this is the provenance guard in
+src/fetal_ai/provenance.py working exactly as designed, not a bug.
+data/manifest/ (manifest.csv, splits/*.json, the two duplicate reports)
+had been built in this Kaggle session but never committed to git.
+Training against it anyway would mean the checkpoint's provenance stamp
+could not actually prove what data it was trained on, since the
+manifest sitting on disk had no corresponding git history. This is the
+exact failure mode this guard exists to catch, and it caught it before
+any GPU time was spent training against unpinned data, not after.
+
+**Decision:** no code change needed. Committed data/manifest/ to git
+(git add data/manifest/, commit, push) before rerunning. Worth stating
+plainly as a process note: data/README.md already said to commit
+data/manifest/ before training, this run is the first real case of that
+instruction actually mattering, and the guard caught the gap when the
+instruction alone had not been followed yet.
+
+**Files touched:** none, data/manifest/ committed as data, not code
+
+**Open question:** confirm the rerun, after committing data/manifest/,
+completes training successfully and produces a real checkpoint and
+results/baseline_spain_efficientnet_b0/metrics.json.
+
+**Superseded 2026-08-10:** the decision in this entry, commit
+data/manifest/ before every training run, was reasonable in principle
+but wrong in practice: it meant a manual git commit on Kaggle every
+session, which is exactly the kind of friction that gets skipped under
+time pressure, silently reopening the gap this guard exists to close.
+See the next entry for the actual fix, narrowing the provenance check
+to code changes only, since data/manifest/'s reproducibility never
+actually depended on git in the first place.
+
+---
+
+## 2026-08-10 Provenance check no longer requires committing data/manifest/
+
+**Trigger:** direct pushback after the previous entry's fix, do not
+want to run git commit on Kaggle every session, the pipeline should
+just reproduce the same output every time without that ceremony.
+
+**Finding:** the underlying concern behind the previous entry's fix,
+never train against data that cannot be traced back to something,
+does not actually require data/manifest/ to be in git. It requires that
+the exact data a run used can be identified after the fact.
+data_manifest_hash in src/fetal_ai/provenance.py already does exactly
+that, computed directly from the manifest file's bytes, regardless of
+whether that file is tracked by git. Combined with fetch.py's checksum
+verification against Zenodo and manifest.py and splits.py both being
+deterministic given a fixed seed, data/manifest/ was already fully
+reproducible without a git commit, the commit requirement was ceremony,
+not safety.
+
+**Decision:** narrowed get_git_commit's dirty check to exclude
+data/manifest/ specifically, using git's pathspec exclude syntax,
+tested directly rather than assumed to work. Confirmed three cases:
+uncommitted changes limited to data/manifest/ no longer block a run,
+an uncommitted change to any actual code file still blocks a run
+exactly as before, and the working tree was correctly restored after
+testing. Updated data/README.md (which also had a separate real gap,
+its reconstruction steps skipped scripts/03_build_splits.py entirely)
+and scripts/run_data_pipeline.sh's final message to match, and marked
+the previous entry's "commit data/manifest" decision as superseded
+rather than leaving two contradictory instructions in this log.
+
+**Files touched:** src/fetal_ai/provenance.py, data/README.md,
+scripts/run_data_pipeline.sh
+
+**Open question:** none, all three cases tested directly against the
+real git behavior before this was called done.

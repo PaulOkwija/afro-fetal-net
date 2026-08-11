@@ -32,5 +32,6 @@ echo "Step 4: verify no leakage, against the real data"
 python scripts/04_verify_no_leakage.py
 
 echo ""
-echo "Data pipeline complete. Commit data/manifest/ to git now, before"
-echo "training anything, so the exact splits used are pinned in history."
+echo "Data pipeline complete. data/manifest/ does not need to be"
+echo "committed, its exact content is captured by data_manifest_hash in"
+echo "every run's provenance stamp, see src/fetal_ai/provenance.py."

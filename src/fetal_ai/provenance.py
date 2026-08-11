@@ -24,19 +24,35 @@ def get_git_commit(repo_root: str | Path = ".") -> str:
     """
     Return the current git commit hash.
 
-    Raises if the working tree has uncommitted changes, on purpose. A
-    result produced from uncommitted code cannot be traced back to
+    Raises if the working tree has uncommitted CODE changes, on purpose.
+    A result produced from uncommitted code cannot be traced back to
     anything, so we refuse to stamp it as if it could be.
+
+    data/manifest/ is excluded from this check. That directory holds
+    generated data (manifest.csv, splits/*.json), not code, and
+    reproducibility of that data does not depend on it being committed
+    to git: fetch.py checksum verifies every raw file against Zenodo,
+    manifest.py and splits.py are deterministic given the same raw data
+    and a fixed seed, and the exact content of whatever manifest a run
+    actually used is already captured by data_manifest_hash below,
+    computed directly from the file's bytes. Requiring a git commit of
+    freshly regenerated data on every Kaggle session added ceremony
+    without adding any safety this hash does not already provide, so it
+    is not required. Code changes anywhere else still block a run, that
+    is the property that actually matters: the code that produced a
+    result must be pinned, unambiguously, every time.
     """
     status = subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "--", ".", ":(exclude)data/manifest"],
         cwd=repo_root, capture_output=True, text=True, check=True,
     )
     if status.stdout.strip():
         raise RuntimeError(
-            "Working tree has uncommitted changes. Commit your code before "
-            "running an experiment whose results you plan to report. "
-            "Uncommitted changed files:\n" + status.stdout
+            "Working tree has uncommitted code changes. Commit your code "
+            "before running an experiment whose results you plan to "
+            "report. This check ignores data/manifest/, which does not "
+            "need to be committed, its exact content is already captured "
+            "by data_manifest_hash. Uncommitted changed files:\n" + status.stdout
         )
 
     commit = subprocess.run(
