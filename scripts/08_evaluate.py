@@ -57,6 +57,16 @@ def main(argv: list[str] | None = None) -> None:
              "defaults to the LOCO split's held_out_patient_ids, the "
              "true unseen Malawi test set.",
     )
+    parser.add_argument(
+        "--rotation_held_out_group", default=None,
+        help="Required when --held_out_split points at a country_rotation "
+             "split (a list of 5 entries, one per country, not a single "
+             "flat patient list). Selects which entry's test_patient_ids "
+             "to evaluate against, must match that entry's checkpoint, "
+             "for example --checkpoint "
+             "results/country_rotation_efficientnet_b0_heldout_Algeria/checkpoint.pt "
+             "must be paired with --rotation_held_out_group Algeria.",
+    )
     parser.add_argument("--data_config", default="configs/data.yaml")
     parser.add_argument("--image_size", type=int, default=224)
     parser.add_argument("--batch_size", type=int, default=32)
@@ -92,7 +102,25 @@ def main(argv: list[str] | None = None) -> None:
     manifest = pd.read_csv(args.manifest)
     split = load_split(args.held_out_split)
 
-    if "held_out_patient_ids" in split:
+    if split.get("split_type") == "country_rotation":
+        if args.rotation_held_out_group is None:
+            available = [entry["held_out_group"] for entry in split["rotation"]]
+            raise ValueError(
+                f"{args.held_out_split} is a country_rotation split, a list "
+                f"of {len(available)} entries ({available}), not a single "
+                f"flat patient list. Pass --rotation_held_out_group naming "
+                f"which one, matching the checkpoint being evaluated."
+            )
+        matching = [e for e in split["rotation"] if e["held_out_group"] == args.rotation_held_out_group]
+        if not matching:
+            available = [entry["held_out_group"] for entry in split["rotation"]]
+            raise ValueError(
+                f"--rotation_held_out_group '{args.rotation_held_out_group}' "
+                f"not found, available groups in this split: {available}"
+            )
+        patient_ids = matching[0]["test_patient_ids"]
+
+    elif "held_out_patient_ids" in split:
         patient_ids = split["held_out_patient_ids"]
     elif "test_patient_ids" in split:
         patient_ids = split["test_patient_ids"]
