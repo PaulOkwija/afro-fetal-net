@@ -23,7 +23,7 @@ data:
   splits_dir: "data/manifest/splits"
   image_size: 224
   batch_size: 32
-  num_workers: 4
+  num_workers: 0  # single process loading, dataset sizes here do not need parallel workers, avoids multi-worker seeding entirely rather than needing to trust it
 
 preprocessing:
   use_clahe: true

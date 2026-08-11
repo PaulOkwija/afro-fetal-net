@@ -618,6 +618,133 @@ paper.
 
 ---
 
+## 2026-08-11 DataLoader with num_workers > 0 was never actually reproducible
+
+**Trigger:** direct request for the pipeline to produce identical
+results on every rerun, before building the results notebooks. Worth
+checking rather than assuming, since num_workers: 4 is set in every
+experiment config but every test written for this project so far,
+including the full end to end integration tests for 06_train.py and
+08_evaluate.py, used num_workers=0.
+
+**Finding:** src/fetal_ai/data/dataset.py's build_dataloader had no
+generator and no worker_init_fn. PyTorch does not automatically make
+a DataLoader's worker processes inherit reproducible randomness from
+set_seed() once num_workers > 0, each worker's own random state for
+augmentation (flips, rotation, jitter, gaussian noise, all applied
+inside FetalPlaneDataset.__getitem__) is not controlled by the main
+process's seed unless explicitly wired through. This means every real
+training run on Kaggle so far (all of which use num_workers: 4) may not
+actually be reproducible run to run, a gap that existed from the start
+but was never exercised by this project's own tests, which all used
+num_workers=0 for speed and simplicity during development.
+
+**Decision:** added an explicit seeded generator (controls shuffle
+order) and worker_init_fn (seeds each worker's numpy and random state
+deterministically, derived from the same base seed) to build_dataloader.
+Also found and fixed a related gap: scripts/06_train.py never passed
+the experiment config's own seed through to build_dataloader, silently
+relying on its default of 42. Every current config happens to set
+seed: 42, so this had no observable effect yet, but it would have
+silently broken a future multi-seed robustness run, changing cfg.seed
+would not have actually changed the data loading randomness.
+
+Verified properly, not just implemented: ran a real DataLoader with
+num_workers=2 (the actual multi-worker case, not the num_workers=0
+this project's tests always used before) twice with the same seed,
+confirmed every batch, images and labels, came out bit-identical. Then
+confirmed a different seed genuinely produces different augmented
+images, so the fix is not trivially "reproducible" by accident because
+randomness got disabled.
+
+Also checked src/fetal_ai/evaluation/evaluate.py's dataloader and found
+it does not need this fix, evaluation runs with is_training=False (no
+augmentation) and num_workers=0 already, so there is no randomness in
+that path to begin with, checked directly rather than assumed clean by
+association.
+
+**Files touched:** src/fetal_ai/data/dataset.py, scripts/06_train.py
+
+**Open question:** none, determinism proven directly against a real
+multi-worker DataLoader, not inferred from the fix looking correct.
+Worth noting for later: this fix does not by itself guarantee
+bit-exact reproducibility of every GPU operation, cudnn.deterministic
+is already set in set_seed(), a stronger guarantee exists via
+torch.use_deterministic_algorithms(True) but was not enabled here, it
+can raise on operations without a deterministic CUDA implementation and
+risks breaking a real training run outright, a worse failure mode than
+the minor floating point variance it would close. Worth trying if
+bit-exact reproducibility across every op ever becomes necessary, not
+enabled by default.
+
+**Follow-up 2026-08-11:** decided to set num_workers: 0 in every
+experiment config instead of relying on the multi-worker seeding fix
+above. Dataset sizes in this project (223 to 3061 images per run) do
+not need parallel data loading, and num_workers=0 sidesteps the whole
+multi-worker seeding question entirely, everything runs in the main
+process, reproducibility follows directly from set_seed() with nothing
+extra to trust. The generator and worker_init_fn added to
+build_dataloader were left in place rather than removed, they are
+correctly gated behind num_workers > 0, so they are inert now but
+available if a future dataset grows large enough to need parallel
+loading.
+
+---
+
+## 2026-08-11 t-SNE domain shift analysis, src/fetal_ai/evaluation/tsne.py
+
+**Trigger:** rebuilding the original paper's Figure 3, which does not
+exist anywhere in the new pipeline. This project never guessed at how
+to extract the embeddings, confirmed directly against the real model
+first.
+
+**Finding, confirmed not assumed:** timm's EfficientNet-B0 exposes
+forward_features then forward_head(..., pre_logits=True) as the
+standard way to get the penultimate layer embedding. Called both
+directly against the actual model this project builds and confirmed
+the output shape is exactly 1280 dimensions, matching the original
+paper's stated figure exactly, this was checked before writing any
+extraction code, not assumed from the paper's number alone.
+
+**What got built:** extract_embeddings (deterministic, verified: same
+model plus same images produces bit-identical embeddings across two
+separate calls), sample_patients_for_tsne (patient level subsampling,
+matching the original paper's 200 Spain / 100 African image budget,
+verified it never splits a patient's images across the sampling
+boundary), run_tsne (a thin wrapper around sklearn with a fixed seed,
+verified the same seed reproduces the identical 2D layout while a
+different seed genuinely produces a different one, so this isn't
+"reproducible" by accident of disabled randomness), and
+plot_domain_shift, which refuses to run with a class_names list that
+does not match the actual label indices present, closing the exact gap
+that let a nonexistent 4th class into the original figure's legend.
+
+scripts/10_tsne_analysis.py wraps all of this against real checkpoints
+and real splits, defaulting to the Spain baseline checkpoint to
+reproduce the original zero shot figure exactly, but works against any
+checkpoint, including the model soup, to show the domain gap after
+adaptation, a natural companion figure the original paper never had.
+
+Ran the full script end to end as a real subprocess against realistic
+synthetic fixtures (separate Spain and African image directories,
+matching the real project's actual folder structure, group_subdir
+included), then visually inspected the saved output: correct panel
+titles including the adaptation-stage suffix, correct three-class
+legend with no phantom category, correct two-domain legend. No visible
+clustering in that test is expected and correct, it used random noise
+images and an untrained model, there is no real signal to find there,
+only the mechanics were being checked.
+
+**Files touched:** src/fetal_ai/evaluation/tsne.py,
+scripts/10_tsne_analysis.py
+
+**Open question:** run against the real Spain baseline checkpoint and
+real data, confirm actual domain separation appears the way the
+original paper described, then run again against the model soup
+checkpoint to see whether adaptation visibly closes the gap.
+
+---
+
 ## 2026-08-11 results/SUMMARY.md blocked a real evaluation run, .gitignore gap
 
 **Trigger:** scripts/08_evaluate.py, run for real against the country
