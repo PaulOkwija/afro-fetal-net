@@ -745,6 +745,70 @@ checkpoint to see whether adaptation visibly closes the gap.
 
 ---
 
+## 2026-08-11 Grad-CAM attention analysis, src/fetal_ai/evaluation/gradcam.py
+
+**Trigger:** rebuilding the original paper's Figure 4 and Table 5,
+which do not exist anywhere in the new pipeline.
+
+**Finding, confirmed not assumed:** the paper states Grad-CAM was
+applied "at the conv head layer of EfficientNet-B0." Checked directly
+against the real model rather than guessing a layer name,
+model.conv_head genuinely exists (a 1x1 conv, 320 to 1280 channels,
+exactly where it should be right before global pooling). The pinned
+grad-cam library (already in requirements.txt from early in this
+project, never previously exercised) was run against the real model
+once before writing extraction code around it, confirming its output
+shape (N, H, W, already resized to input resolution) and value range
+([0, 1], already normalized), rather than assuming either from the
+library's documentation.
+
+**Concentration and entropy, defined and tested against known cases,**
+not just plausible looking code: concentration is the fraction of
+total activation energy inside the top 20% of pixels by value, matching
+the paper's stated definition exactly. entropy is Shannon entropy of
+the CAM as a probability distribution over pixels, normalized by
+log(N) so it is always in [0, 1] regardless of resolution. Tested a
+single hot pixel (concentration near 1.0, entropy near 0.0, both
+correct for a maximally sharp map), a perfectly uniform map
+(concentration exactly equal to the top fraction, entropy of exactly
+1.0, both correct for a maximally diffuse map), a degenerate all zero
+map (returns 0.0 for both rather than crashing or returning NaN), and
+confirmed an intermediate case sits strictly between the two extremes
+on both metrics.
+
+**A deliberate scope limit, stated plainly rather than glossed over:**
+this module reports concentration and entropy as what they are,
+measures of how sharp or diffuse a heatmap is, and does not claim the
+resulting maps show "clinically correct attention." That exact phrase
+in the original submission was reviewer bR8N's specific objection, a
+fair one, concentration and entropy do not measure anatomical
+correctness, only sharpness. Without expert annotated landmarks to
+compare against, which this project does not have, that claim cannot
+be made, and the code does not make it.
+
+scripts/11_gradcam_analysis.py wraps this against a real checkpoint and
+the real Malawi test set, defaulting to the model soup checkpoint,
+producing both the Table 5 style metrics (saved as JSON) and a real
+figure of example overlays per class (saved as PNG). Ran the full
+script end to end as a real subprocess against realistic synthetic
+fixtures matching the real African per-country folder structure, then
+visually inspected the saved figure, confirming correct panel layout,
+titles, and real heatmap-on-image blending. The gradient pattern
+visible in that test reflects an untrained model looking at random
+noise, expected and correct for that test, not evidence of anything
+about real attention quality.
+
+**Files touched:** src/fetal_ai/evaluation/gradcam.py,
+scripts/11_gradcam_analysis.py
+
+**Open question:** run against the real model soup checkpoint and real
+Malawi images, see whether concentration and entropy look qualitatively
+similar to the original paper's Table 5 (0.626 mean concentration,
+0.664 mean entropy) or meaningfully different, and decide what, if
+anything, that difference means before writing about it in the paper.
+
+---
+
 ## 2026-08-11 results/SUMMARY.md blocked a real evaluation run, .gitignore gap
 
 **Trigger:** scripts/08_evaluate.py, run for real against the country
