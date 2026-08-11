@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -113,13 +114,30 @@ def run_one_training(
     run_id: str,
     manifest_path: str,
     allow_dirty: bool,
+    force: bool = False,
 ) -> dict[str, Any]:
     """
     Run exactly one training run: build datasets, build the model,
     train, stamp provenance, save the result. Called once for a single
     split config, or once per fold/rotation entry for LOCO and country
     rotation configs, always through this same function.
+
+    If results/<run_id>/metrics.json already exists, this run is
+    skipped and the existing result is loaded and returned instead,
+    unless force=True. This exists because a LOCO sweep is 4 training
+    runs and a country rotation sweep is 5, and Kaggle sessions have
+    time and GPU quota limits, a session dying after fold 2 of 4 should
+    not mean folds 0 and 1 get retrained from scratch the next time this
+    cell runs. Rerunning the exact same notebook cells after a session
+    restart is the intended way to resume a sweep.
     """
+    existing_result_path = Path("results") / run_id / "metrics.json"
+    if existing_result_path.exists() and not force:
+        print(f"\nSkipping {run_id}, already completed, found {existing_result_path}. "
+              f"Pass force=True to retrain anyway.")
+        with open(existing_result_path) as f:
+            return json.load(f)["metrics"]
+
     print(f"\n{'=' * 70}\nRun: {run_id}\n{'=' * 70}")
     set_seed(cfg["seed"])
 
@@ -184,6 +202,12 @@ def main() -> None:
              "for local debugging, never for a run whose results will be "
              "reported anywhere.",
     )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Retrain even if results/<run_id>/metrics.json already exists. "
+             "Default is to skip completed runs, so a sweep can resume "
+             "across Kaggle sessions without redoing finished work.",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -200,6 +224,7 @@ def main() -> None:
         cfg=cfg, manifest=manifest, class_names=class_names,
         image_dir_by_source=image_dir_by_source, group_subdir_by_source=group_subdir_by_source,
         device=args.device, manifest_path=cfg["data"]["manifest_path"], allow_dirty=args.allow_dirty,
+        force=args.force,
     )
 
     if split["split_type"] == "patient_level_train_val_test":
