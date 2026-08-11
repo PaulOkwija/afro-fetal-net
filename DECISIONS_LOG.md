@@ -505,3 +505,113 @@ scripts/run_data_pipeline.sh
 
 **Open question:** none, all three cases tested directly against the
 real git behavior before this was called done.
+
+---
+
+## 2026-08-10 scripts/07_model_soup.py, and a real bug caught by testing against known values
+
+**Trigger:** writing the model soup script, the piece that averages the
+four LOCO fold checkpoints into the single model the paper's headline
+result actually describes. Nothing before this point produced that
+model as a saved checkpoint.
+
+**Testing approach:** rather than trust that averaging four state dicts
+"looks right", built four synthetic fold checkpoints with known,
+controlled weight offsets from a common base (0.0, 0.1, 0.2, 0.3), so
+the correct averaged result (offset 0.15) could be checked exactly, not
+just eyeballed.
+
+**Finding:** the first version of average_state_dicts called .float()
+on every tensor in every state dict before averaging, including
+BatchNorm's num_batches_tracked, an integer training step counter, not
+a learnable weight. Averaging four different integer counts produces a
+float like 153.75, which then gets silently truncated back to an
+integer by load_state_dict's implicit float to int casting when loaded
+into the model. The first attempt at verification actually caught this
+by accident, comparing against a freshly reseeded reference model
+showed a small but real deviation that traced back to exactly this
+buffer, not the floating point weights, which were correct from the
+start. Worth naming plainly: this had zero effect on inference
+correctness (BatchNorm in eval mode uses running_mean and running_var,
+never num_batches_tracked), but silently corrupting a value via an
+implicit type cast is not a decision this project makes by accident.
+
+**Decision:** average_state_dicts now checks each tensor's dtype.
+Floating point tensors (weights, running_mean, running_var) are
+averaged as before. Non floating point tensors (num_batches_tracked)
+are copied unchanged from the first checkpoint, with a printed count of
+how many buffers this applied to, rather than silently mangled.
+Verified with a second test using distinct, realistic integer values
+per fold (100, 250, 175, 90 batches), confirming the soup model ends up
+with exactly fold 0's value (100), not a truncated blend, alongside
+reconfirming the floating point weights are still the mathematically
+exact average.
+
+**Files touched:** scripts/07_model_soup.py
+
+**Open question:** none, both the floating point averaging and the
+integer buffer handling are independently verified against known
+ground truth values before shipping.
+
+---
+
+## 2026-08-11 scripts/08_evaluate.py and scripts/09_collect_results.py, the pieces that turn checkpoints into reportable numbers
+
+**Trigger:** direct request for code that evaluates the model soup
+against Malawi and assembles whatever results already exist, not a
+fabricated table, since nothing before this point actually scored a
+checkpoint against a true, held out test set with a confidence
+interval. trainer.py only ever reports validation metrics.
+
+**Also worth recording:** checked two related past conversations for
+existing results before building this, since the person mentioned a
+"sister chat." One contained real numbers, but from the old, pre
+rebuild, notebook based pipeline, the same one with the confirmed
+substring matching bug that silently scored the 2354 image Spanish test
+set instead of the 75 image Malawi set for most of its reported
+numbers. Those numbers are not usable here, they cannot be traced back
+to this project's current code or corrected manifest, using them would
+repeat the exact mistake this rebuild exists to fix. Said so plainly
+rather than quietly reusing them.
+
+**What got built:** src/fetal_ai/evaluation/evaluate.py holds the one
+real evaluation function, evaluate_checkpoint, used for every
+checkpoint this project evaluates, the Spain baseline zero shot, Spain
+plus CLAHE, the pooled baseline, any individual LOCO fold, and the
+model soup. It always produces a patient level bootstrap CI for
+f1_macro, never a bare point estimate, reusing evaluation/bootstrap.py.
+accuracy and pr_auc_macro are reported as point estimates only in this
+first pass, a deliberate scope limit, not an oversight, noted directly
+in the function's docstring. Tested end to end against a real
+synthetic checkpoint and images, confirming correct patient and image
+counts, a bootstrap CI that structurally contains its own point
+estimate, and confirming raw model weights never leak into the saved
+results file.
+
+scripts/08_evaluate.py wraps this for the command line, defaults tuned
+so evaluating the model soup against Malawi needs only --checkpoint,
+while remaining general enough for any checkpoint against any held out
+split. Reuses the same resume skip pattern as 06_train.py and
+07_model_soup.py, a --force flag to override it, and hashes its own CLI
+arguments as its provenance config_hash, since no experiment config
+file drives an evaluation run the way one drives training. Tested as an
+actual subprocess, not just as imported functions, confirming a full
+run, the skip on rerun, and a well formed saved metrics.json.
+
+scripts/09_collect_results.py reads every results/*/metrics.json that
+currently exists and assembles them into one table, classifying each by
+shape (training run, evaluation run, or model soup run) rather than
+guessing. An unrecognized shape is printed and skipped, never silently
+dropped or crashed on. Tested against a realistic mix of all three
+known shapes plus one deliberately malformed entry, confirming correct
+classification and that the malformed one is reported rather than
+hidden.
+
+**Files touched:** src/fetal_ai/evaluation/evaluate.py,
+scripts/08_evaluate.py, scripts/09_collect_results.py
+
+**Open question:** run scripts/08_evaluate.py against the real model
+soup checkpoint once it exists from real training, then
+scripts/09_collect_results.py, and confirm the resulting table's shape
+matches what this entry describes before it goes anywhere near the
+paper.

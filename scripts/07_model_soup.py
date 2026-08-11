@@ -85,12 +85,24 @@ def average_state_dicts(state_dicts: list[dict]) -> dict:
     return averaged
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    """
+    argv defaults to None, which makes argparse read sys.argv, correct
+    when this script is launched as its own process via `!python
+    scripts/07_model_soup.py --loco_config ...`, which is the only
+    supported way to run this. If this function is ever called directly
+    inside a running notebook kernel instead, sys.argv belongs to the
+    kernel launcher, not this script, and parsing it will fail with a
+    confusing "unrecognized arguments" error naming a kernel connection
+    file. Pass argv explicitly, for example main(["--loco_config",
+    "configs/experiment/loco_africa.yaml"]), to bypass sys.argv
+    entirely if you genuinely need to call this in-kernel.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--loco_config", default="configs/experiment/loco_africa.yaml")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--allow_dirty", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     cfg = load_config(args.loco_config)
     split = load_split(Path(cfg["data"]["splits_dir"]) / f"{cfg['data']['split_name']}.json")
