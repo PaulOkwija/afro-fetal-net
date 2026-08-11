@@ -4,8 +4,14 @@ data/interim/
 
 # Model weights and large result artifacts are not committed to git.
 # They are logged to Weights and Biases instead, and referenced by run_id.
+# results/* (no trailing slash) covers both per-run subdirectories AND
+# top-level files written directly into results/, like SUMMARY.md from
+# scripts/09_collect_results.py. The earlier results/*/ pattern only
+# matched subdirectories and silently let a top-level file like that
+# show up as untracked, which then incorrectly blocked training runs,
+# see DECISIONS_LOG.md.
 checkpoints/
-results/*/
+results/*
 !results/RESULTS_LEDGER.md
 !results/README.md
 

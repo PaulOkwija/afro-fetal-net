@@ -615,3 +615,45 @@ soup checkpoint once it exists from real training, then
 scripts/09_collect_results.py, and confirm the resulting table's shape
 matches what this entry describes before it goes anywhere near the
 paper.
+
+---
+
+## 2026-08-11 results/SUMMARY.md blocked a real evaluation run, .gitignore gap
+
+**Trigger:** scripts/08_evaluate.py, run for real against the country
+rotation checkpoints, correctly computed and printed real metrics for
+Algeria, Egypt, and Ghana, then crashed at the provenance stamping step
+with the same "uncommitted code changes" error the data/manifest/ entry
+above already fixed once, this time naming results/SUMMARY.md.
+
+**Finding:** .gitignore's rule for results/ was `results/*/`, which
+only matches subdirectories, not a plain file sitting directly in
+results/. scripts/09_collect_results.py's own output file,
+results/SUMMARY.md, was never covered by it, so it showed up as
+genuinely untracked, and get_git_commit's dirty check, which only
+excluded data/manifest/ at the time, correctly (if unhelpfully) blocked
+on it. Same underlying reasoning as the data/manifest/ fix applies
+here: results/ is entirely derived output, every individual
+results/<run_id>/metrics.json already carries its own provenance stamp,
+so a summary file aggregating them does not need to be committed for
+anything to stay traceable.
+
+**Decision:** fixed .gitignore's pattern to results/* (no trailing
+slash), which covers both subdirectories and top-level files, and
+added results/ to get_git_commit's pathspec exclusion alongside
+data/manifest/. Tested in an isolated git repository, not the working
+repo (which has too much of its own accumulated uncommitted state from
+this session to give a clean signal), confirming with an explicit
+clean-state check before each case: results/SUMMARY.md and a real
+per-run subdirectory genuinely do not block a run, and a real code
+change still does. First attempt at this test gave a misleading
+failure, contamination from a leftover edit in a previous test
+iteration in the same directory that was never reset, worth remembering
+that a test needs confirmed clean state going in, not just plausible
+looking code, to mean anything.
+
+**Files touched:** .gitignore, src/fetal_ai/provenance.py
+
+**Open question:** none, both the ignore rule and the provenance
+exclusion independently confirmed against real git behavior with
+explicit clean-state checks before trusting either result.

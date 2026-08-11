@@ -28,31 +28,41 @@ def get_git_commit(repo_root: str | Path = ".") -> str:
     A result produced from uncommitted code cannot be traced back to
     anything, so we refuse to stamp it as if it could be.
 
-    data/manifest/ is excluded from this check. That directory holds
-    generated data (manifest.csv, splits/*.json), not code, and
-    reproducibility of that data does not depend on it being committed
-    to git: fetch.py checksum verifies every raw file against Zenodo,
-    manifest.py and splits.py are deterministic given the same raw data
-    and a fixed seed, and the exact content of whatever manifest a run
-    actually used is already captured by data_manifest_hash below,
-    computed directly from the file's bytes. Requiring a git commit of
-    freshly regenerated data on every Kaggle session added ceremony
-    without adding any safety this hash does not already provide, so it
-    is not required. Code changes anywhere else still block a run, that
-    is the property that actually matters: the code that produced a
-    result must be pinned, unambiguously, every time.
+    data/manifest/ and results/ are both excluded from this check.
+    Neither holds code. data/manifest/ is checksum verified generated
+    data, see the note below. results/ is entirely derived output, each
+    individual results/<run_id>/metrics.json already carries its own
+    provenance stamp, so a convenience file like results/SUMMARY.md
+    (scripts/09_collect_results.py) does not need to be committed for
+    anything to stay traceable, and should not be able to block a
+    training or evaluation run just by existing as an untracked file.
+
+    data/manifest/ holds generated data (manifest.csv, splits/*.json),
+    not code, and reproducibility of that data does not depend on it
+    being committed to git: fetch.py checksum verifies every raw file
+    against Zenodo, manifest.py and splits.py are deterministic given
+    the same raw data and a fixed seed, and the exact content of
+    whatever manifest a run actually used is already captured by
+    data_manifest_hash below, computed directly from the file's bytes.
+    Requiring a git commit of freshly regenerated data on every Kaggle
+    session added ceremony without adding any safety this hash does not
+    already provide, so it is not required. Code changes anywhere else
+    still block a run, that is the property that actually matters: the
+    code that produced a result must be pinned, unambiguously, every
+    time.
     """
     status = subprocess.run(
-        ["git", "status", "--porcelain", "--", ".", ":(exclude)data/manifest"],
+        ["git", "status", "--porcelain", "--", ".",
+         ":(exclude)data/manifest", ":(exclude)results"],
         cwd=repo_root, capture_output=True, text=True, check=True,
     )
     if status.stdout.strip():
         raise RuntimeError(
             "Working tree has uncommitted code changes. Commit your code "
             "before running an experiment whose results you plan to "
-            "report. This check ignores data/manifest/, which does not "
-            "need to be committed, its exact content is already captured "
-            "by data_manifest_hash. Uncommitted changed files:\n" + status.stdout
+            "report. This check ignores data/manifest/ and results/, "
+            "neither needs to be committed, see get_git_commit's "
+            "docstring for why. Uncommitted changed files:\n" + status.stdout
         )
 
     commit = subprocess.run(
