@@ -16,10 +16,26 @@ contrast), a standard, common definition, and says so here rather than
 presenting it as if it were confirmed against the original
 implementation. If the original authors' exact definition ever surfaces,
 this is the only place that needs to change.
+
+CLAHE is a training time augmentation here, applied randomly each
+epoch, gated by augmentation_config's clahe_p, exactly like the other
+augmentations (flips, rotation, jitter, gaussian noise). It never
+applies during evaluation, is_training controls that the same way it
+gates every other augmentation. This matches how CLAHE was actually
+used in the original experiments, confirmed directly rather than
+assumed, see DECISIONS_LOG.md. An earlier version of this file applied
+CLAHE deterministically at both train and eval time, driven by a
+preprocessing_config dict instead. That version is what let the African
+fine tuning configs silently contradict the paper's own stated
+methodology ("Selective CLAHE is omitted during fine-tuning
+augmentations"), since deterministic-always-on CLAHE was quietly
+running during every African training run regardless of that stated
+intent.
 """
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Any
 
@@ -154,6 +170,8 @@ class FetalPlaneDataset(Dataset):
 
         self.transform = transforms.Compose(ops)
 
+        self.transform = transforms.Compose(ops)
+
     def __len__(self) -> int:
         return len(self.rows)
 
@@ -168,13 +186,24 @@ class FetalPlaneDataset(Dataset):
                 f"patient_id={row['patient_id']}, filename={row['filename']}"
             )
 
-        if self.preprocessing_config.get("use_clahe", False):
-            image_gray = apply_selective_clahe(
-                image_gray,
-                contrast_threshold=self.preprocessing_config["contrast_threshold"],
-                clip_limit=self.preprocessing_config["clahe_clip_limit"],
-                tile_size=self.preprocessing_config["clahe_tile_size"],
-            )
+        # CLAHE is a training time augmentation, not an inference time
+        # preprocessing step, matching how it was actually used in the
+        # original experiments: applied randomly each epoch, alongside
+        # the other augmentations, only during training. It is never
+        # applied when is_training is False, evaluation always sees the
+        # raw image. See DECISIONS_LOG.md for why this changed from an
+        # earlier version where CLAHE applied deterministically at both
+        # train and eval time, which does not match how it was actually
+        # used and, worse, had been silently contradicting the paper's
+        # own stated methodology for the African fine tuning configs.
+        if self.is_training and "clahe_p" in self.augmentation_config:
+            if torch.rand(1).item() < self.augmentation_config["clahe_p"]:
+                image_gray = apply_selective_clahe(
+                    image_gray,
+                    contrast_threshold=self.augmentation_config.get("contrast_threshold", 35),
+                    clip_limit=self.augmentation_config.get("clahe_clip_limit", 2.0),
+                    tile_size=self.augmentation_config.get("clahe_tile_size", (8, 8)),
+                )
 
         # Ultrasound images are single channel, ImageNet backbones expect
         # 3 channels, replicate the grayscale channel rather than
@@ -224,8 +253,39 @@ def build_dataloader(
     batch_size: int,
     is_training: bool,
     num_workers: int = 4,
+    seed: int = 42,
 ) -> DataLoader:
+    """
+    seed controls two things that PyTorch does not make reproducible by
+    default once num_workers > 0: the shuffle order (via an explicit
+    generator, rather than relying on whatever the ambient global random
+    state happens to be at iteration time) and each worker process's own
+    random state (via worker_init_fn), which controls the actual
+    augmentation randomness (flips, rotation, jitter, gaussian noise)
+    applied inside FetalPlaneDataset.__getitem__.
+
+    Without this, num_workers > 0 (every config in this project uses
+    num_workers: 4) can produce a different augmented image, and
+    therefore different training dynamics, on every run, even with
+    set_seed() called and the same config, since forked worker processes
+    do not automatically inherit a seed reproducibly from the main
+    process. This was never exercised by this project's own tests
+    before, which all used num_workers=0, see DECISIONS_LOG.md.
+    """
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+
+    def _seed_worker(worker_id: int) -> None:
+        # torch.initial_seed() inside a worker is derived deterministically
+        # from the DataLoader's own base_seed (set from `generator` above)
+        # combined with the worker id, so this differs per worker but is
+        # exactly reproducible run to run given the same seed.
+        worker_seed = torch.initial_seed() % (2**32)
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
     return DataLoader(
         dataset, batch_size=batch_size, shuffle=is_training,
         num_workers=num_workers, drop_last=False,
+        generator=generator, worker_init_fn=_seed_worker if num_workers > 0 else None,
     )

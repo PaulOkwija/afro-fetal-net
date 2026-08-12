@@ -880,6 +880,170 @@ just that it skips correctly on a rerun.
 
 ---
 
+## 2026-08-12 zero shot and zero shot plus CLAHE gave identical numbers on real Malawi data, investigated rather than assumed explainable
+
+**Trigger:** direct report that spain_zero_shot_on_malawi and
+spain_plus_clahe_on_malawi produced identical F1, CI, and accuracy on
+real data, exact to the decimal. Flagged as suspicious earlier in this
+project (see the entry on pooled baseline vs model soup matching), but
+never actually investigated for this specific pair, only offered a
+plausible sounding explanation (CLAHE's threshold rarely triggers on
+Malawi images) that was never tested.
+
+**Investigation, in order:**
+1. Confirmed the underlying tensor level mechanism first. Built a
+   genuinely low contrast synthetic image (contrast score 1.7, well
+   under the threshold of 35) and ran it through build_dataset with
+   preprocessing_config's use_clahe True vs False. The two resulting
+   tensors are not close, max absolute difference 1.33 in normalized
+   space. This rules out a wiring bug between preprocessing_config and
+   the actual model input, the mechanism works.
+2. Confirmed the argument parsing layer by direct code inspection,
+   scripts/08_evaluate.py's --use_clahe flag flows straight into
+   preprocessing_config with no transformation, nothing to go wrong.
+3. Ran the actual script twice as real subprocesses against a small
+   test set that included one genuinely low contrast image mixed among
+   normal ones. F1 and accuracy still matched exactly, but this test is
+   not conclusive, the checkpoint used has random, untrained weights
+   (pretrained=False, this sandbox cannot reach huggingface.co to
+   download real ImageNet weights, a known limitation, see earlier
+   entries), so its decision boundary is arbitrary, and a small pixel
+   perturbation not flipping an untrained model's prediction says
+   nothing about whether it would flip a real trained model's
+   prediction. Stated this limitation plainly rather than treating the
+   matching result as confirmation of anything.
+
+**What was missing to go further:** evaluate_checkpoint discarded
+per-image predictions after computing the aggregate metrics, so there
+was no way to check, on real data, whether CLAHE actually changed any
+individual prediction, only whether the aggregate F1 moved, which can
+stay identical even when real, individual predictions differ.
+
+**Decision:** added per-image predictions to evaluate_checkpoint's
+return value (patient_id, filename, true label, predicted label,
+correct), and scripts/08_evaluate.py now saves these to
+results/<run_id>/predictions.csv, separate from the summary
+metrics.json, specifically so two runs can be diffed image by image.
+Tested end to end as real subprocesses, confirmed the CSV is written
+correctly and contains exactly the expected rows.
+
+**Files touched:** src/fetal_ai/evaluation/evaluate.py,
+scripts/08_evaluate.py
+
+**Open question, needs the real Kaggle data to resolve, not something
+this sandbox can determine:** two concrete steps to actually settle
+this. First, check the real contrast score distribution of the 60
+Malawi images directly, using compute_contrast_score from
+src/fetal_ai/data/dataset.py, to see how many are even below the
+threshold of 35 and could possibly be affected. Second, rerun both
+zero_shot and plus_clahe evaluations with --force to pick up the new
+predictions.csv output, then diff the two CSVs directly. If zero images
+are below the threshold, identical results are expected and correct,
+not a bug. If some images are below threshold but predictions.csv
+still shows zero changed predictions even for those specific images,
+that would be a real, more specific finding worth investigating
+further, not yet ruled out by anything tested so far.
+
+**Superseded 2026-08-12:** this entire investigation assumed CLAHE was
+meant to be an inference time toggle, matching the paper's Table 4
+structure and what the code actually implemented. Direct clarification
+established that assumption was wrong, see the next entry. Everything
+found here (tensor level mechanism confirmed correct, argument parsing
+confirmed correct) remains true and useful, but the eval time --use_clahe
+flag this entry investigated no longer exists.
+
+---
+
+## 2026-08-12 CLAHE was meant to be a training time augmentation, not an inference time toggle, and this had already silently contradicted the paper in every African training run
+
+**Trigger:** direct clarification that the original CLAHE experiments
+compared training runs with CLAHE as a live, randomized, per epoch
+augmentation (alongside flips, rotation, jitter) against training runs
+without it, applied to both the Spain baseline and the African fine
+tuning stage, not an inference time preprocessing choice applied to an
+already trained model. This does not match what the previous entry's
+code implemented, which matched the paper's own written Table 4
+structure (zero shot, then "+ Selective CLAHE" as a second row on the
+same underlying weights) but not what was actually run.
+
+**A second, independent problem this surfaced:** checked the CLAHE
+setting in every experiment config before changing anything.
+baseline_spain.yaml had use_clahe: false (unaffected). But
+loco_africa.yaml, pooled_baseline.yaml, and country_rotation.yaml all
+had use_clahe: true. Under the old mechanism, preprocessing_config
+applied deterministically at both train and eval time, with no
+is_training gate at all. This means every African checkpoint already
+trained under this project, all 4 LOCO folds, the model soup built
+from them, the pooled baseline, and all 5 country rotation models, was
+trained with CLAHE applied to every eligible image, every epoch,
+deterministically. This directly contradicts the paper's own stated
+methodology: "Selective CLAHE is omitted during fine-tuning
+augmentations to prevent double-processing." That contradiction was
+sitting in the actual training configs the whole time, not caught until
+checked directly here, prompted by the clarification, not found by
+inspection for its own sake.
+
+**Decision:** restructured CLAHE in src/fetal_ai/data/dataset.py to be
+a genuine training time augmentation: gated by is_training (never
+applies during evaluation, regardless of any config setting) and by a
+new augmentation_config key, clahe_p, drawn randomly each time an
+eligible image is loaded, exactly like the existing flip, rotation, and
+jitter augmentations. The existing selectivity logic (only images below
+the contrast threshold are eligible at all) is preserved underneath
+that random gate. Tested four properties directly, not assumed: CLAHE
+never applies during evaluation even with clahe_p=1.0, it always
+applies during training with clahe_p=1.0 to an eligible image, it never
+applies with clahe_p=0.0, and at clahe_p=0.5 it applies at roughly that
+rate across 200 draws (111/200, well within tolerance), not always or
+never. Also confirmed selectivity still holds, a high contrast image is
+never modified regardless of clahe_p.
+
+Updated every experiment config accordingly. baseline_spain.yaml is now
+the explicit "without CLAHE" baseline. A new
+baseline_spain_with_clahe.yaml is identical in every other
+hyperparameter, differing only in augmentation.clahe_p, so any
+performance difference between the two resulting checkpoints can be
+attributed to CLAHE specifically. loco_africa.yaml, pooled_baseline.yaml,
+and country_rotation.yaml all had their use_clahe: true preprocessing
+block removed entirely, now matching the paper's stated methodology for
+real, not by accident of an unused config field.
+
+Removed scripts/08_evaluate.py's --use_clahe flag and the
+preprocessing_config it built from it, since CLAHE now never applies
+during evaluation regardless of any flag, keeping that flag would have
+been dead code that actively re-invited the exact confusion this entry
+exists to close. Tested the cleaned up script as a real subprocess,
+confirmed it still runs end to end correctly.
+
+**The real, practical implication, stated plainly:** every African
+checkpoint trained so far under this project needs to be retrained.
+This is not optional cleanup, the existing checkpoints were trained
+under a configuration that contradicts the paper's own methodology
+section, and any result computed from them cannot be reported as
+matching that methodology. The Spain baseline (use_clahe: false)
+checkpoint remains valid and does not need retraining, but a second
+Spain checkpoint (baseline_spain_with_clahe.yaml) needs training fresh,
+since it did not exist under the old scheme at all, the old scheme had
+no notion of a trained-with-CLAHE Spain model, only an eval time toggle
+on the single existing one.
+
+**Files touched:** src/fetal_ai/data/dataset.py,
+configs/experiment/baseline_spain.yaml,
+configs/experiment/baseline_spain_with_clahe.yaml (new),
+configs/experiment/loco_africa.yaml,
+configs/experiment/pooled_baseline.yaml,
+configs/experiment/country_rotation.yaml, scripts/08_evaluate.py
+
+**Open question:** decide and execute the retraining plan. At minimum:
+baseline_spain_with_clahe.yaml (new), pooled_baseline.yaml, all 4
+loco_africa.yaml folds, the model soup rebuilt from those folds, and
+all 5 country_rotation.yaml models. The existing baseline_spain.yaml
+checkpoint can stay. Every downstream evaluation, t-SNE, and Grad-CAM
+result computed from the old African checkpoints should be treated as
+stale until this retraining happens, not reported as final.
+
+---
+
 ## 2026-08-11 results/SUMMARY.md blocked a real evaluation run, .gitignore gap
 
 **Trigger:** scripts/08_evaluate.py, run for real against the country

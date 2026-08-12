@@ -1,0 +1,59 @@
+# The "with CLAHE" comparison to baseline_spain.yaml. Every hyperparameter
+# here is identical to baseline_spain.yaml except augmentation.clahe_p, so
+# any difference in this checkpoint's performance can be attributed to CLAHE
+# training augmentation specifically, not to some unrelated config drift.
+#
+# This produces a genuinely different, separately trained checkpoint, not a
+# preprocessing toggle applied at evaluation time to the same weights. CLAHE
+# here is applied randomly during training, alongside the other augmentations,
+# selectively to eligible (low contrast) images, and is never applied during
+# evaluation, matching how it was actually used in the original experiments.
+# See DECISIONS_LOG.md for the investigation that established this.
+
+experiment_name: "baseline_spain_efficientnet_b0_with_clahe"
+
+classes:
+  - brain
+  - femur
+  - abdomen
+
+seed: 42
+
+data:
+  manifest_path: "data/manifest/manifest.csv"
+  split_name: "spain_patient_level"
+  splits_dir: "data/manifest/splits"
+  image_size: 224
+  batch_size: 32
+  num_workers: 0  # single process loading, dataset sizes here do not need parallel workers, avoids multi-worker seeding entirely rather than needing to trust it
+
+preprocessing: {}
+  # See baseline_spain.yaml, CLAHE lives in augmentation below, not here.
+
+augmentation:
+  random_horizontal_flip_p: 0.5
+  random_rotation_degrees: 15
+  brightness_contrast_p: 0.6
+  gaussian_noise_p: 0.3
+  clahe_p: 0.5              # applied roughly half the time to eligible images, alongside the other augmentations
+  contrast_threshold: 35     # matches the original paper's stated selectivity threshold
+  clahe_clip_limit: 2.0
+  clahe_tile_size: [8, 8]
+
+model:
+  architecture: "efficientnet_b0"
+  pretrained_checkpoint: null   # ImageNet weights, via timm, pretrained=true
+  fine_tune_layers: -1          # all layers trainable
+
+training:
+  epochs: 50
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 10
+
+evaluation:
+  metrics: ["f1_macro", "accuracy", "pr_auc_macro"]
+  bootstrap_n: 2000
+  bootstrap_confidence: 0.95

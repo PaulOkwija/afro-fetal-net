@@ -15,8 +15,8 @@ Usage:
         --run_id spain_zero_shot_on_malawi
 
     python scripts/08_evaluate.py \\
-        --checkpoint results/baseline_spain_efficientnet_b0/checkpoint.pt \\
-        --run_id spain_plus_clahe_on_malawi --use_clahe
+        --checkpoint results/baseline_spain_efficientnet_b0_with_clahe/checkpoint.pt \\
+        --run_id spain_with_clahe_training_zero_shot_on_malawi
 """
 
 from __future__ import annotations
@@ -70,15 +70,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--data_config", default="configs/data.yaml")
     parser.add_argument("--image_size", type=int, default=224)
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument(
-        "--use_clahe", action="store_true",
-        help="Apply CLAHE preprocessing at evaluation time, independent "
-             "of whether the checkpoint was trained with it. This lets "
-             "the same Spain checkpoint be evaluated both zero shot and "
-             "zero shot plus CLAHE, matching Table 4's first two rows.",
-    )
-    parser.add_argument("--contrast_threshold", type=float, default=35)
-    parser.add_argument("--clahe_clip_limit", type=float, default=2.0)
+    # No --use_clahe flag here on purpose. CLAHE is a training time
+    # augmentation (see src/fetal_ai/data/dataset.py), it never applies
+    # during evaluation regardless of any preprocessing setting, so a
+    # CLI flag toggling it at eval time would be inert and misleading.
+    # To compare "trained with CLAHE" vs "trained without," evaluate two
+    # different checkpoints, see baseline_spain.yaml and
+    # baseline_spain_with_clahe.yaml. See DECISIONS_LOG.md.
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
         "--run_id", default=None,
@@ -132,21 +130,13 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"Evaluating checkpoint: {args.checkpoint}")
     print(f"Against {len(patient_ids)} held out patients from {args.held_out_split}")
-    print(f"CLAHE at eval time: {args.use_clahe}")
 
     image_dir_by_source, group_subdir_by_source = load_data_source_dirs(args.data_config)
-
-    preprocessing_config = {
-        "use_clahe": args.use_clahe,
-        "contrast_threshold": args.contrast_threshold,
-        "clahe_clip_limit": args.clahe_clip_limit,
-        "clahe_tile_size": (8, 8),
-    }
 
     result = evaluate_checkpoint(
         checkpoint_path=args.checkpoint, manifest=manifest, patient_ids=patient_ids,
         image_dir_by_source=image_dir_by_source, group_subdir_by_source=group_subdir_by_source,
-        image_size=args.image_size, preprocessing_config=preprocessing_config,
+        image_size=args.image_size, preprocessing_config={},
         device=args.device, batch_size=args.batch_size,
         bootstrap_n=args.bootstrap_n, bootstrap_confidence=args.bootstrap_confidence,
     )
@@ -158,6 +148,17 @@ def main(argv: list[str] | None = None) -> None:
           f"[{ci['ci_lower']:.4f}, {ci['ci_upper']:.4f}]  (n={ci['n_unique_patients']} patients)")
     print(f"accuracy: {result['point_estimates']['accuracy']:.4f}")
     print(f"pr_auc_macro: {result['point_estimates'].get('pr_auc_macro')}")
+
+    # Save per-image predictions to their own CSV, separate from
+    # metrics.json, specifically so two runs (for example the same
+    # checkpoint with and without CLAHE) can be compared image by image,
+    # not just by their summary F1, which can stay identical even when
+    # individual predictions genuinely change, or vice versa.
+    predictions = result.pop("predictions")
+    predictions_path = Path("results") / run_id / "predictions.csv"
+    predictions_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(predictions).to_csv(predictions_path, index=False)
+    print(f"Per-image predictions saved to {predictions_path}")
 
     provenance = build_provenance_stamp(
         # No experiment config file drives an evaluation run, the CLI
