@@ -108,6 +108,15 @@ def evaluate_checkpoint(
     estimates only in this first pass, that scope limit is deliberate,
     not an oversight, extending the bootstrap to those metrics is
     straightforward future work if needed.
+
+    Also returns "predictions", one row per image with patient_id,
+    filename, true label, and predicted label as strings, not just the
+    aggregate metrics. This exists specifically so two evaluation runs
+    (for example the same checkpoint with and without CLAHE) can be
+    compared image by image, not only by their summary F1, which can
+    stay identical even when individual predictions genuinely differ,
+    or can differ for reasons that have nothing to do with what changed
+    between the two runs. See DECISIONS_LOG.md.
     """
     model, class_names, checkpoint_payload = load_checkpoint(checkpoint_path, device=device)
 
@@ -127,10 +136,12 @@ def evaluate_checkpoint(
 
     # dataset.rows preserves the exact row order build_dataloader iterates
     # in, since is_training=False means shuffle=False, this order is what
-    # ties each prediction back to the patient it came from.
+    # ties each prediction back to the patient and file it came from.
     patient_ids_in_order = dataset.rows["patient_id"].tolist()
+    filenames_in_order = dataset.rows["filename"].tolist()
 
     predictions_df = run_inference(model, loader, patient_ids_in_order, device)
+    predictions_df["filename"] = filenames_in_order
 
     y_true = np.array(predictions_df["y_true"].tolist())
     y_pred = np.array(predictions_df["y_pred"].tolist())
@@ -148,6 +159,18 @@ def evaluate_checkpoint(
         confidence=bootstrap_confidence,
     )
 
+    idx_to_class = {i: name for i, name in enumerate(class_names)}
+    predictions = [
+        {
+            "patient_id": row.patient_id,
+            "filename": row.filename,
+            "y_true": idx_to_class[int(row.y_true)],
+            "y_pred": idx_to_class[int(row.y_pred)],
+            "correct": bool(row.y_true == row.y_pred),
+        }
+        for row in predictions_df.itertuples()
+    ]
+
     return {
         "checkpoint_path": checkpoint_path,
         "checkpoint_extra": {
@@ -159,4 +182,5 @@ def evaluate_checkpoint(
         "n_patients": len(set(patient_ids_in_order)),
         "point_estimates": point_estimates,
         "f1_macro_bootstrap_ci": f1_ci,
+        "predictions": predictions,
     }
