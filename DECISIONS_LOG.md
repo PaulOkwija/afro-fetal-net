@@ -809,6 +809,77 @@ anything, that difference means before writing about it in the paper.
 
 ---
 
+## 2026-08-11 Notebooks train themselves, no notebook depends on a checkpoint already existing
+
+**Trigger:** direct request that no notebook require a pre-existing
+trained checkpoint, each one should train what it needs, resumably,
+and reproducibly.
+
+**What changed:** scripts/10_tsne_analysis.py and
+scripts/11_gradcam_analysis.py gained the same resume skip pattern
+already used by 06_train.py, 07_model_soup.py, and 08_evaluate.py,
+skip if the output already exists, --force to override. Both are
+otherwise expensive to rerun (t-SNE fit, Grad-CAM forward and backward
+passes over a full test set) and deterministic given the same
+checkpoint, so silently redoing them on every notebook rerun would
+waste real time for no benefit.
+
+**Also added:** domain_separability_score in
+src/fetal_ai/evaluation/tsne.py, a cross validated linear classifier
+accuracy predicting domain from the real embeddings, not the 2D t-SNE
+projection. This exists because a t-SNE plot is something to look at,
+not evidence, eyeballing whether two color groups look separated is
+not a rigorous claim. Tested against a clearly separable synthetic case
+(near 1.0 accuracy) and a genuinely inseparable one (near chance level)
+before being trusted, wired into scripts/10_tsne_analysis.py to print
+and save alongside the figure automatically.
+
+**notebooks/02_domain_shift_baseline.ipynb built and genuinely
+executed, not just written:** built a complete, isolated fake project
+(real src/ and scripts/ symlinked in, a real git repo, synthetic
+manifest, splits, and images matching the real folder structure
+exactly) to run this notebook for real through a Jupyter kernel via
+nbclient. First execution attempt genuinely exercised the training
+cell's real code path and hit this sandbox's known lack of network
+access to huggingface.co, the same limitation already documented for
+06_train.py, not a new problem, and confirmed the notebook does not
+halt on a failed shell cell, Jupyter's `!` magic does not raise on a
+nonzero exit code, worth knowing generally.
+
+Rather than treat that as blocking, since pretrained=True was already
+independently confirmed working on real Kaggle in an earlier entry,
+pre-created a checkpoint standing in for a real prior training run
+using the project's own save_checkpoint and save_run_result functions,
+to properly test the resume skip path, the more common real world case
+of rerunning this notebook after training has already happened once.
+Caught and fixed two real mistakes in the test fixture itself along the
+way, not the project code: forgot to copy the real .gitignore into the
+fixture (letting __pycache__ show up as dirty, a false alarm, same
+class of mistake as an earlier provenance.py test), and a mismatched
+experiment_name between the fixture config and the pre-created
+checkpoint's path, which let the first execution attempt silently
+proceed past the intended skip point rather than actually testing it.
+Fixed both, reran, and confirmed cleanly this time: the training cell
+printed the correct skip message, and every downstream cell, both
+evaluations, the confusion matrix figure, and the t-SNE figure with its
+domain separability number, ran for real and rendered correctly,
+pulled out of the executed notebook and visually inspected, not assumed
+from the code looking right.
+
+**Files touched:** src/fetal_ai/evaluation/tsne.py,
+scripts/10_tsne_analysis.py, scripts/11_gradcam_analysis.py,
+notebooks/02_domain_shift_baseline.ipynb
+
+**Open question:** the actual ImageNet download path inside a notebook
+context specifically (as opposed to a bare script call, already
+confirmed on Kaggle) is still not directly proven from within a
+notebook cell, only inferred from the two being the same underlying
+code path. Worth watching the first real run of this notebook on
+Kaggle to confirm the training cell completes end to end there, not
+just that it skips correctly on a rerun.
+
+---
+
 ## 2026-08-11 results/SUMMARY.md blocked a real evaluation run, .gitignore gap
 
 **Trigger:** scripts/08_evaluate.py, run for real against the country

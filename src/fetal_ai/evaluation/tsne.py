@@ -22,7 +22,9 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from sklearn.linear_model import LogisticRegression
 from sklearn.manifold import TSNE
+from sklearn.model_selection import cross_val_score
 
 from fetal_ai.data.dataset import build_dataloader, build_dataset
 from fetal_ai.data.splits import manifest_rows_for_patients
@@ -114,6 +116,38 @@ def run_tsne(
 
     tsne = TSNE(n_components=2, random_state=seed, perplexity=effective_perplexity, init="pca")
     return tsne.fit_transform(embeddings)
+
+
+def domain_separability_score(
+    embeddings: np.ndarray,
+    domain_labels: np.ndarray,
+    seed: int = 42,
+    n_splits: int = 5,
+) -> dict[str, Any]:
+    """
+    Cross validated accuracy of a simple linear classifier predicting
+    domain from the real, full dimensional embeddings, not the 2D t-SNE
+    projection, which is a lossy nonlinear view meant for looking at,
+    not for measuring separability precisely.
+
+    This exists because eyeballing a t-SNE plot is not evidence, it is
+    an impression. A mean accuracy near 1.0 means domains remain
+    linearly separable in this representation, the domain gap has not
+    closed. A mean accuracy near chance level (1 / number of domains)
+    means it effectively has. Tested against a clearly separable
+    synthetic case and a genuinely inseparable one before being trusted
+    for anything real, see DECISIONS_LOG.md.
+    """
+    clf = LogisticRegression(max_iter=1000, random_state=seed)
+    scores = cross_val_score(clf, embeddings, domain_labels, cv=n_splits)
+    n_domains = len(set(domain_labels.tolist()))
+    return {
+        "mean_accuracy": float(scores.mean()),
+        "std_accuracy": float(scores.std()),
+        "n_splits": n_splits,
+        "chance_level": 1.0 / n_domains,
+        "n_samples": len(embeddings),
+    }
 
 
 def plot_domain_shift(

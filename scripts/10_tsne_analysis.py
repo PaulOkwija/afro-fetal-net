@@ -21,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -32,7 +33,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from fetal_ai.data.dataset import build_dataloader, build_dataset
 from fetal_ai.data.splits import load_split
-from fetal_ai.evaluation.tsne import extract_embeddings, plot_domain_shift, run_tsne, sample_patients_for_tsne
+from fetal_ai.evaluation.tsne import (
+    domain_separability_score,
+    extract_embeddings,
+    plot_domain_shift,
+    run_tsne,
+    sample_patients_for_tsne,
+)
 from fetal_ai.models.build import load_checkpoint
 
 
@@ -60,7 +67,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--perplexity", type=float, default=30.0)
     parser.add_argument("--title_suffix", default=" (zero shot, before adaptation)")
     parser.add_argument("--out", default="results/tsne_domain_shift.png")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Regenerate even if --out already exists. Default is to skip, "
+             "t-SNE is not cheap to rerun repeatedly, and re-running with the "
+             "same seed always produces the identical figure anyway.",
+    )
     args = parser.parse_args(argv)
+
+    if Path(args.out).exists() and not args.force:
+        print(f"Skipping, {args.out} already exists. Pass --force to regenerate anyway.")
+        return
 
     manifest = pd.read_csv(args.manifest)
     image_dir_by_source, group_subdir_by_source = load_data_source_dirs(args.data_config)
@@ -105,6 +122,14 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Running t-SNE on {len(all_embeddings)} total embeddings, seed={args.seed}")
     coords_2d = run_tsne(all_embeddings, seed=args.seed, perplexity=args.perplexity)
 
+    separability = domain_separability_score(all_embeddings, all_domain_labels, seed=args.seed)
+    print(
+        f"\nDomain separability (cross validated linear classifier accuracy): "
+        f"{separability['mean_accuracy']:.3f} +/- {separability['std_accuracy']:.3f} "
+        f"(chance level = {separability['chance_level']:.3f}). "
+        f"Computed on the real embeddings, not the 2D t-SNE projection."
+    )
+
     fig = plot_domain_shift(
         coords_2d, all_domain_labels, all_class_labels, class_names=class_names,
         domain_names=["spain", "african"], title_suffix=args.title_suffix,
@@ -112,7 +137,12 @@ def main(argv: list[str] | None = None) -> None:
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.out, dpi=150, bbox_inches="tight")
-    print(f"\nSaved to {args.out}")
+    print(f"\nSaved figure to {args.out}")
+
+    metrics_out = str(Path(args.out).with_suffix(".json"))
+    with open(metrics_out, "w") as f:
+        json.dump({"checkpoint": args.checkpoint, "domain_separability": separability}, f, indent=2)
+    print(f"Saved domain separability metric to {metrics_out}")
 
 
 if __name__ == "__main__":

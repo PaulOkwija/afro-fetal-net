@@ -59,7 +59,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out_figure", default="results/gradcam_examples.png")
     parser.add_argument("--out_metrics", default="results/gradcam_metrics.json")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Regenerate even if --out_metrics already exists. Default is to "
+             "skip, Grad-CAM over a full test set is not cheap to rerun "
+             "repeatedly, and it is deterministic given the same checkpoint.",
+    )
     args = parser.parse_args(argv)
+
+    if Path(args.out_metrics).exists() and not args.force:
+        print(f"Skipping, {args.out_metrics} already exists. Pass --force to regenerate anyway.")
+        return
 
     manifest = pd.read_csv(args.manifest)
     image_dir_by_source, group_subdir_by_source = load_data_source_dirs(args.data_config)
